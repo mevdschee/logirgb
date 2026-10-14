@@ -423,7 +423,7 @@ func (m *model) unwritten() []int {
 // write stores the settings of device i in its onboard memory.
 func (m *model) write(i int) error {
 	e, s := m.entries[i], m.states[i]
-	n, dir, err := app.SaveToProfiles(e, s.dev)
+	n, err := app.SaveToProfiles(e, s.dev)
 	if err != nil {
 		m.setStatus(fmt.Errorf("%s: %w", e.Name, err))
 		return err
@@ -431,9 +431,9 @@ func (m *model) write(i int) error {
 	s.dirty = false
 	if e.Ctl.HasProfileStorage() {
 		s.claimed = false
-		m.setStatus(nil, "stored in the keyboard; it now dims and turns off by itself (backup: "+dir+")")
+		m.setStatus(nil, "stored in the keyboard; it now dims and turns off by itself")
 	} else {
-		m.setStatus(nil, fmt.Sprintf("stored in %d onboard profiles (backup: %s)", n, dir))
+		m.setStatus(nil, fmt.Sprintf("stored in %d onboard profiles", n))
 	}
 	return nil
 }
@@ -487,7 +487,7 @@ var helpSections = []struct {
 		{"enter  e", "type a color: #rrggbb, r,g,b or a name like orange"},
 	}},
 	{"Device", [][2]string{
-		{"w", "write the settings to the device's onboard memory, after a backup"},
+		{"w", "write the settings to the device's onboard memory"},
 		{"o", "drop unwritten changes and show the stored lighting again"},
 		{"ctrl+r  F5", "rescan the devices"},
 		{"?", "show this help; any key closes it"},
@@ -500,7 +500,6 @@ var helpSections = []struct {
 		{"enabled", "the profile button skips profiles that are not enabled; the active one stays enabled"},
 		{"settings", "are read from the device; edits are kept until you write them with w"},
 		{"*", "marks a device with changes that are not written yet"},
-		{"backups", "w first saves the onboard memory in ~/.local/share/logirgb/backups"},
 	}},
 }
 

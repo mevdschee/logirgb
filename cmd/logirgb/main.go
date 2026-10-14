@@ -34,10 +34,9 @@ Usage:
 Devices (-d) are selected by list number, hidraw path or name fragment
 such as "g515". Without -d every usable device is changed.
 
-Settings are read from the devices and written to their onboard memory
-(after a backup in ~/.local/share/logirgb/backups); set and timeouts take
---preview to only show a change until the next profile switch or power
-cycle.
+Settings are read from the devices and written to their onboard memory;
+set and timeouts take --preview to only show a change until the next
+profile switch or power cycle.
 
 Run "logirgb <command> -h" for the flags of a command.
 `
@@ -381,10 +380,7 @@ func store(e *app.Entry, d *state.Device, preview bool) error {
 		fmt.Printf("%s: no onboard memory, the change lasts until the next power cycle\n", e.Name)
 		return nil
 	}
-	n, dir, err := app.SaveToProfiles(e, d)
-	if dir != "" {
-		fmt.Printf("%s: previous onboard memory backed up to %s\n", e.Name, dir)
-	}
+	n, err := app.SaveToProfiles(e, d)
 	if err != nil {
 		return err
 	}

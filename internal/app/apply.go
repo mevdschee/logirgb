@@ -2,10 +2,6 @@ package app
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
-	"time"
 
 	"github.com/mevdschee/logirgb/internal/state"
 	"github.com/mevdschee/logirgb/lighting"
@@ -62,23 +58,18 @@ func ApplyTimers(e *Entry, d *state.Device) error {
 const DefaultDimPercent = 50
 
 // SaveToProfiles stores the configured lighting in the device's onboard
-// memory, after backing that memory up. For keyboards with profile storage
-// it also stores the idle/sleep timeouts and hands the lighting back to the
-// firmware, which then dims and switches off by itself. It returns the
-// number of profiles written and the backup directory.
-func SaveToProfiles(e *Entry, d *state.Device) (int, string, error) {
+// memory. For keyboards with profile storage it also stores the idle/sleep
+// timeouts and hands the lighting back to the firmware, which then dims and
+// switches off by itself. It returns the number of profiles written.
+func SaveToProfiles(e *Entry, d *state.Device) (int, error) {
 	effects := profileEffects(e, d, 0)
 	if len(effects) == 0 && len(d.Profiles) == 0 {
-		return 0, "", fmt.Errorf("no effects configured yet, set one first")
-	}
-	dir, err := backup(e)
-	if err != nil {
-		return 0, "", fmt.Errorf("backup: %w", err)
+		return 0, fmt.Errorf("no effects configured yet, set one first")
 	}
 	if !e.Ctl.HasProfileStorage() {
 		count, err := e.Ctl.ProfileCount()
 		if err != nil {
-			return 0, dir, err
+			return 0, err
 		}
 		profiles := make([]lighting.Profile, count)
 		for p := range profiles {
@@ -87,7 +78,7 @@ func SaveToProfiles(e *Entry, d *state.Device) (int, string, error) {
 		}
 		n, err := e.Ctl.SaveToProfiles(profiles)
 		if err != nil {
-			return n, dir, err
+			return n, err
 		}
 		// The profiles cover profile switches; the persistent zone effect
 		// covers power-up, when the mouse shows its stored zone effect.
@@ -98,18 +89,18 @@ func SaveToProfiles(e *Entry, d *state.Device) (int, string, error) {
 		}
 		for zone, eff := range effects {
 			if err := e.Ctl.SetEffectPersistent(zone, eff); err != nil {
-				return n, dir, fmt.Errorf("zone %d: %w", zone, err)
+				return n, fmt.Errorf("zone %d: %w", zone, err)
 			}
 		}
-		return n, dir, nil
+		return n, nil
 	}
 	eff, ok := effects[0]
 	if !ok {
-		return 0, dir, fmt.Errorf("no effect configured for zone 0")
+		return 0, fmt.Errorf("no effect configured for zone 0")
 	}
 	idle, sleep, err := e.Ctl.Timers()
 	if err != nil {
-		return 0, dir, err
+		return 0, err
 	}
 	if d.IdleTimeout != nil {
 		idle = *d.IdleTimeout
@@ -122,10 +113,10 @@ func SaveToProfiles(e *Entry, d *state.Device) (int, string, error) {
 		dim = *d.DimPercent
 	}
 	if err := e.Ctl.StoreProfile(eff, dim, idle, sleep); err != nil {
-		return 0, dir, err
+		return 0, err
 	}
 	// The stored timers only load on power-up; set the running ones too.
-	return 1, dir, e.Ctl.SetTimers(idle, sleep)
+	return 1, e.Ctl.SetTimers(idle, sleep)
 }
 
 // loadOnboard takes the settings stored in the device's onboard memory
@@ -199,32 +190,4 @@ func profileEffects(e *Entry, d *state.Device, profile int) map[int]lighting.Eff
 		}
 	}
 	return effects
-}
-
-// backup saves the device's onboard memory under
-// ~/.local/share/logirgb/backups/<vid-pid>-<time>/.
-func backup(e *Entry) (string, error) {
-	files, err := e.Ctl.BackupProfiles()
-	if err != nil {
-		return "", err
-	}
-	base := os.Getenv("XDG_DATA_HOME")
-	if base == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		base = filepath.Join(home, ".local", "share")
-	}
-	dir := filepath.Join(base, "logirgb", "backups",
-		strings.ReplaceAll(e.Key, ":", "-")+"-"+time.Now().Format("20060102-150405"))
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
-	}
-	for name, data := range files {
-		if err := os.WriteFile(filepath.Join(dir, name), data, 0o644); err != nil {
-			return "", err
-		}
-	}
-	return dir, nil
 }

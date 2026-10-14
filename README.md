@@ -90,9 +90,8 @@ what the onboard memory holds (the G515 profile's lighting, dim level and
 timeouts, and the lighting, DPI levels and report rate of each G502
 profile) and writes changes back to it. `set` and `timeouts` store their
 change right away, unless `--preview` is given; in the TUI changes show on
-the device right away and `w` stores them. The previous contents are backed
-up to `~/.local/share/logirgb/backups/` first, and every write is verified
-by reading it back. Devices without onboard memory only get a live change
+the device right away and `w` stores them. Every write is verified by
+reading it back. Devices without onboard memory only get a live change
 that lasts until the next power cycle.
 
 **G515 TKL.** The keyboard's onboard profile holds the lighting, a dimmed
