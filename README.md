@@ -105,12 +105,12 @@ does not dim; `save` hands control back, and `o` in the TUI (or
 **G502 HERO.** The mouse re-applies the lighting of its onboard profile
 whenever you switch profiles (the button behind the scroll wheel) or replug
 it, so `save` writes the lighting into all onboard profiles. Each profile can
-have its own lighting: pick it with the Profile row in the TUI (`all` or a
-profile number; the active one is marked) or with `set -p <n>`. Changes made
-under `all` apply to every profile and replace the per profile lighting of
-that zone.
+have its own lighting: pick it with the Profile row in the TUI (it starts on
+the active profile, which is marked) or with `set -p <n>`. Without `-p`,
+`set` changes every profile and replaces the per profile lighting of that
+zone. The TUI lists all zones of the device under each other.
 
-With a profile selected the TUI also shows its report rate, its DPI levels
+The TUI also shows the selected profile's report rate, its DPI levels
 (up to five, `off` for unused ones), the level the profile starts on and the
 level the DPI shift button switches to. The DPI range and report rates come
 from the mouse (100-25600 DPI in steps of 50 and 125-1000 Hz on the G502

@@ -58,17 +58,24 @@ type row struct {
 	kind  rowKind
 	label string
 	param lighting.ParamSpec
+	zone  int // zone for rowZone, rowEffect and rowParam
 	level int // DPI level for rowDPI
 }
 
+// selectable reports whether the cursor can stop on the row; zone rows are
+// headings.
+func (r row) selectable() bool { return r.kind != rowZone }
+
 // devState is what the TUI shows for one device.
 type devState struct {
-	// profile is the onboard profile being edited (1-based), 0 for all.
+	// profile is the onboard profile being edited (1-based), 0 for devices
+	// without onboard profiles.
 	profile  int
 	profiles int
 	active   int
 	zone     int
-	// effects holds the zone effects per profile, index 0 for all.
+	// effects holds the zone effects per profile, index 0 for devices
+	// without onboard profiles.
 	effects [][]lighting.Effect
 	// dpiRange and rates limit the profile settings (report rate, DPI).
 	dpiRange   lighting.DPIRange
@@ -91,6 +98,10 @@ type model struct {
 	row    int
 	width  int
 	height int
+	// devOff and rowOff are the first visible lines of the device and
+	// settings panes when they scroll.
+	devOff int
+	rowOff int
 
 	editing bool
 	input   textinput.Model
@@ -131,7 +142,7 @@ func (m *model) load() error {
 	if m.dev >= len(entries) {
 		m.dev = 0
 	}
-	m.row = 0
+	m.firstRow()
 	return nil
 }
 
@@ -145,6 +156,10 @@ func (m *model) initState(e *app.Entry) *devState {
 	if e.Ctl.HasOnboardProfiles() {
 		s.profiles, _ = e.Ctl.ProfileCount()
 		s.active, _ = e.Ctl.ActiveProfile()
+		s.profile = 1
+		if s.active >= 1 && s.active <= s.profiles {
+			s.profile = s.active
+		}
 	}
 	if e.Ctl.HasProfileSettings() {
 		s.dpiRange = e.Ctl.DPIRange()
@@ -223,13 +238,15 @@ func (m *model) rows() []row {
 	if s.profiles > 0 {
 		rows = append(rows, row{kind: rowProfile, label: "Profile"})
 	}
-	if len(zones) > 1 {
-		rows = append(rows, row{kind: rowZone, label: "Zone"})
-	}
-	rows = append(rows, row{kind: rowEffect, label: "Effect"})
-	if ze, ok := zones[s.zone].Find(s.effect().Name); ok {
-		for _, p := range ze.Type.Params() {
-			rows = append(rows, row{kind: rowParam, label: p.Label, param: p})
+	for zi, z := range zones {
+		if len(zones) > 1 {
+			rows = append(rows, row{kind: rowZone, zone: zi})
+		}
+		rows = append(rows, row{kind: rowEffect, label: "Effect", zone: zi})
+		if ze, ok := z.Find(s.effects[s.profile][zi].Name); ok {
+			for _, p := range ze.Type.Params() {
+				rows = append(rows, row{kind: rowParam, label: p.Label, param: p, zone: zi})
+			}
 		}
 	}
 	if ps := m.settings(); ps != nil {
@@ -320,12 +337,12 @@ func (m *model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "up", "k":
 			if m.dev > 0 {
 				m.dev--
-				m.row = 0
+				m.firstRow()
 			}
 		case "down", "j":
 			if m.dev < len(m.entries)-1 {
 				m.dev++
-				m.row = 0
+				m.firstRow()
 			}
 		case "enter", "right", "l":
 			if len(m.rows()) > 0 {
@@ -338,13 +355,9 @@ func (m *model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	rows := m.rows()
 	switch msg.String() {
 	case "up", "k":
-		if m.row > 0 {
-			m.row--
-		}
+		m.moveRow(-1)
 	case "down", "j":
-		if m.row < len(rows)-1 {
-			m.row++
-		}
+		m.moveRow(1)
 	case "left", "h":
 		m.adjust(rows[m.row], -1, false)
 	case "right", "l":
@@ -357,6 +370,7 @@ func (m *model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		r := rows[m.row]
 		if r.kind == rowParam && r.param.Name.IsColor() {
 			_, s := m.current()
+			s.zone = r.zone
 			eff := s.effect()
 			ze, _ := m.entries[m.dev].Ctl.Zones()[s.zone].Find(eff.Name)
 			m.input.SetValue(lighting.FormatColor(eff.Get(ze.Type, r.param.Name)))
@@ -394,6 +408,25 @@ func (m *model) updateEditing(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// moveRow moves the cursor to the next selectable row in direction dir.
+func (m *model) moveRow(dir int) {
+	rows := m.rows()
+	for i := m.row + dir; i >= 0 && i < len(rows); i += dir {
+		if rows[i].selectable() {
+			m.row = i
+			return
+		}
+	}
+}
+
+// firstRow puts the cursor on the first selectable row.
+func (m *model) firstRow() {
+	m.row = 0
+	if rows := m.rows(); len(rows) > 0 && !rows[0].selectable() {
+		m.moveRow(1)
+	}
+}
+
 func clamp(v, lo, hi int) int {
 	return max(lo, min(hi, v))
 }
@@ -418,14 +451,14 @@ func stepThrough(steps []int, cur, dir int) int {
 func (m *model) adjust(r row, dir int, big bool) {
 	e, s := m.current()
 	zones := e.Ctl.Zones()
+	if r.kind == rowEffect || r.kind == rowParam {
+		s.zone = r.zone
+	}
 	switch r.kind {
 	case rowProfile:
-		s.profile = (s.profile + dir + s.profiles + 1) % (s.profiles + 1)
+		s.profile = (s.profile-1+dir+s.profiles)%s.profiles + 1
 		m.row = min(m.row, len(m.rows())-1)
 		m.previewProfile()
-	case rowZone:
-		s.zone = (s.zone + dir + len(zones)) % len(zones)
-		m.row = min(m.row, len(m.rows())-1)
 	case rowEffect:
 		z := zones[s.zone]
 		idx := 0
@@ -573,10 +606,7 @@ func (m *model) applyEffect() {
 		d := m.cfg.Device(e.Key)
 		d.Name = e.Name
 		if s.profile == 0 {
-			d.SetAllProfilesZone(s.zone, eff)
-			for p := range s.effects {
-				s.effects[p][s.zone] = eff
-			}
+			d.SetZone(s.zone, eff)
 		} else {
 			d.SetProfileZone(s.profile, s.zone, eff)
 		}
@@ -604,11 +634,7 @@ func (m *model) previewProfile() {
 		}
 	}
 	s.claimed = true
-	if s.profile == 0 {
-		m.setStatus(nil, "editing all profiles; changes replace the per profile lighting")
-	} else {
-		m.setStatus(nil, fmt.Sprintf("editing profile %d", s.profile))
-	}
+	m.setStatus(nil, fmt.Sprintf("editing profile %d", s.profile))
 }
 
 func (m *model) save() {
@@ -639,74 +665,164 @@ var (
 	warnBox    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(errColor).Padding(0, 1)
 )
 
+// Pane layout: the device pane takes leftPercent of the terminal width and
+// the settings pane the rest; both fill the height left by the header and
+// footer.
+const (
+	leftPercent   = 30
+	minLeftWidth  = 24
+	minRightWidth = 44
+	defaultWidth  = 100
+)
+
+// paneWidths returns the outer widths (with borders) of the two panes.
+func (m *model) paneWidths() (int, int) {
+	w := m.width
+	if w <= 0 {
+		w = defaultWidth
+	}
+	left := max(w*leftPercent/100, minLeftWidth)
+	return left, max(w-left, minRightWidth)
+}
+
 func (m *model) View() string {
-	var b strings.Builder
-	b.WriteString(titleStyle.Render("logirgb") + dimStyle.Render("  Logitech RGB control") + "\n")
-
+	width := m.width
+	if width <= 0 {
+		width = defaultWidth
+	}
+	var top strings.Builder
+	top.WriteString(titleStyle.Render("logirgb") + dimStyle.Render("  Logitech RGB control"))
 	if denied := app.PermissionProblems(m.entries); len(denied) > 0 {
-		b.WriteString(warnBox.Render(errStyle.Render("Permission problem") + "\n" + strings.TrimRight(app.PermissionHelp(denied), "\n")))
-		b.WriteString("\n")
+		top.WriteString("\n" + warnBox.Width(width-2).Render(errStyle.Render("Permission problem")+"\n"+strings.TrimRight(app.PermissionHelp(denied), "\n")))
 	}
 
-	left := m.viewDevices()
-	right := m.viewSettings()
-	lp, rp := paneStyle, paneStyle
-	if m.focus == focusDevices {
-		lp = focusPane
-	} else {
-		rp = focusPane
-	}
-	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, lp.Width(30).Render(left), rp.Width(max(m.width-36, 44)).Render(right)))
-	b.WriteString("\n")
-
+	var bottom strings.Builder
 	if m.status != "" {
 		if m.isError {
-			b.WriteString(errStyle.Render("✗ "+m.status) + "\n")
+			bottom.WriteString(errStyle.Width(width).Render("✗ "+m.status) + "\n")
 		} else {
-			b.WriteString(selStyle.Render("✓ ") + m.status + "\n")
+			bottom.WriteString(lipgloss.NewStyle().Width(width).Render(selStyle.Render("✓ ")+m.status) + "\n")
 		}
 	}
 	help := "tab switch pane · ↑↓ select · ←→ change (shift: faster) · enter edit color · a apply saved · w store in device · o onboard lighting · ctrl+r rescan · q quit"
 	if m.editing {
 		help = "type #rrggbb, r,g,b or a color name · enter confirm · esc cancel"
 	}
-	b.WriteString(dimStyle.Render(help))
-	return b.String()
+	bottom.WriteString(dimStyle.Width(width).Render(help))
+
+	lw, rw := m.paneWidths()
+	lp, rp := paneStyle, paneStyle
+	if m.focus == focusDevices {
+		lp = focusPane
+	} else {
+		rp = focusPane
+	}
+	// Width and Height include the padding but not the border.
+	lp, rp = lp.Width(lw-2), rp.Width(rw-2)
+	if m.height > 0 {
+		h := m.height - lipgloss.Height(top.String()) - lipgloss.Height(bottom.String()) - 2
+		lp, rp = lp.Height(max(h, 0)), rp.Height(max(h, 0))
+	}
+	left, devSel := m.viewDevices(lw - 4)
+	right, rowSel := m.viewSettings(rw - 4)
+	if m.height > 0 {
+		h := m.height - lipgloss.Height(top.String()) - lipgloss.Height(bottom.String()) - 2
+		left = scroll(left, lw-4, devSel, h, &m.devOff)
+		right = scroll(right, rw-4, rowSel, h, &m.rowOff)
+	}
+	panes := lipgloss.JoinHorizontal(lipgloss.Top, lp.Render(left), rp.Render(right))
+	return top.String() + "\n" + panes + "\n" + bottom.String()
 }
 
-func (m *model) viewDevices() string {
+// scroll wraps content to width and, when it is taller than height, shows
+// the window of height lines starting at *off, moved as little as needed to
+// keep line sel visible with a line of context around it. Hidden lines
+// above and below are marked.
+func scroll(content string, width, sel, height int, off *int) string {
+	lines := strings.Split(lipgloss.NewStyle().Width(width).Render(content), "\n")
+	if height < 3 || len(lines) <= height {
+		*off = 0
+		return strings.Join(lines, "\n")
+	}
+	sel = clamp(sel, 0, len(lines)-1)
+	// The first and last window lines hold the markers when there is more
+	// above or below, so sel has to stay between them.
+	if first := *off + min(*off, 1); sel <= first {
+		*off = max(sel-2, 0)
+	}
+	if last := *off + height - 2; *off+height < len(lines) && sel >= last {
+		*off = sel - height + 3
+	}
+	*off = clamp(*off, 0, len(lines)-height)
+	out := slices.Clone(lines[*off : *off+height])
+	if *off > 0 {
+		out[0] = dimStyle.Render("  ↑ more")
+	}
+	if *off+height < len(lines) {
+		out[height-1] = dimStyle.Render("  ↓ more")
+	}
+	return strings.Join(out, "\n")
+}
+
+// linesIn returns how many lines s takes when wrapped to width.
+func linesIn(s string, width int) int {
+	s = strings.TrimSuffix(s, "\n")
+	if s == "" {
+		return 0
+	}
+	return lipgloss.Height(lipgloss.NewStyle().Width(width).Render(s))
+}
+
+// truncate shortens s to at most n runes, ending in an ellipsis when cut.
+func truncate(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	if n <= 1 {
+		return string(r[:max(n, 0)])
+	}
+	return string(r[:n-1]) + "…"
+}
+
+// viewDevices renders the device list for a pane with the given inner
+// width, and the line of the selected device.
+func (m *model) viewDevices(width int) (string, int) {
 	var b strings.Builder
 	b.WriteString(titleStyle.Render("Devices") + "\n")
 	if len(m.entries) == 0 {
 		b.WriteString(dimStyle.Render("no Logitech devices found\nctrl+r to rescan"))
-		return b.String()
+		return b.String(), 0
 	}
+	sel := 0
 	for i, e := range m.entries {
 		mark, style := "●", lipgloss.NewStyle()
 		if !e.Usable() {
 			mark, style = "✗", errStyle
 		}
-		name := e.Name
-		if len(name) > 22 {
-			name = name[:21] + "…"
-		}
+		name := truncate(e.Name, width-4)
 		line := fmt.Sprintf("%s %s", style.Render(mark), name)
 		if i == m.dev {
+			// Keep the path line below the name in view too.
+			sel = linesIn(b.String(), width) + 1
 			line = selStyle.Render("› ") + line
 		} else {
 			line = "  " + line
 		}
 		b.WriteString(line + "\n")
-		b.WriteString(dimStyle.Render("    "+e.Info.Path) + "\n")
+		b.WriteString(dimStyle.Render(truncate("    "+e.Info.Path, width)) + "\n")
 	}
-	return strings.TrimRight(b.String(), "\n")
+	return strings.TrimRight(b.String(), "\n"), sel
 }
 
-func (m *model) viewSettings() string {
+// viewSettings renders the settings of the selected device for a pane with
+// the given inner width, and the line of the selected row.
+func (m *model) viewSettings(width int) (string, int) {
 	e, s := m.current()
 	if e == nil {
-		return dimStyle.Render("nothing selected")
+		return dimStyle.Render("nothing selected"), 0
 	}
+	sel := 0
 	var b strings.Builder
 	b.WriteString(titleStyle.Render(e.Name) + dimStyle.Render("  "+e.Key) + "\n")
 	if !e.Usable() {
@@ -715,7 +831,7 @@ func (m *model) viewSettings() string {
 		} else {
 			b.WriteString(errStyle.Render(e.Err.Error()))
 		}
-		return b.String()
+		return b.String(), 0
 	}
 	switch {
 	case !s.claimed:
@@ -726,24 +842,24 @@ func (m *model) viewSettings() string {
 	b.WriteString("\n")
 
 	zones := e.Ctl.Zones()
-	eff := *s.effect()
-	ze, _ := zones[s.zone].Find(eff.Name)
 	for i, r := range m.rows() {
+		eff := s.effects[s.profile][r.zone]
+		ze, _ := zones[r.zone].Find(eff.Name)
 		var val string
 		switch r.kind {
 		case rowProfile:
-			val = "all"
-			if s.profile > 0 {
-				val = fmt.Sprintf("%d of %d", s.profile, s.profiles)
-			}
+			val = fmt.Sprintf("%d of %d", s.profile, s.profiles)
 			if s.active > 0 && s.profile == s.active {
 				val += "  " + dimStyle.Render("active")
 			}
 		case rowZone:
-			val = fmt.Sprintf("%s (%d/%d)", zones[s.zone].Location, s.zone+1, len(zones))
-			if d := zones[s.zone].Description; d != "" {
-				val += "  " + dimStyle.Render(d)
+			z := zones[r.zone]
+			heading := fmt.Sprintf("Zone %d · %s", r.zone, z.Location)
+			if z.Description != "" {
+				heading += "  " + dimStyle.Render(z.Description)
 			}
+			b.WriteString("\n" + lipgloss.NewStyle().PaddingLeft(2).Width(width).Render(titleStyle.Render(heading)) + "\n")
+			continue
 		case rowEffect:
 			val = eff.Name
 		case rowParam:
@@ -779,6 +895,9 @@ func (m *model) viewSettings() string {
 		if r.kind == rowBrightness || r.kind == rowIdle || r.kind == rowRate {
 			b.WriteString("\n")
 		}
+		if i == m.row {
+			sel = linesIn(b.String(), width)
+		}
 		if i == m.row && m.focus == focusSettings {
 			b.WriteString(selStyle.Render("› "+label) + " " + selStyle.Render("‹ ") + val + selStyle.Render(" ›") + "\n")
 		} else {
@@ -786,12 +905,12 @@ func (m *model) viewSettings() string {
 		}
 	}
 	if e.Ctl.HasOnboardProfiles() {
-		b.WriteString("\n" + dimStyle.Render("changes last until a profile switch; press w to store them in the onboard profiles; report rate and DPI change only with w"))
+		b.WriteString("\n" + dimStyle.Render(truncate("not stored until w; lost on a profile switch", width)))
 	}
 	if e.Ctl.HasProfileStorage() {
-		b.WriteString("\n" + dimStyle.Render("the keyboard only dims and turns off stored lighting; press w to store"))
+		b.WriteString("\n" + dimStyle.Render(truncate("only stored lighting dims and turns off; press w", width)))
 	}
-	return strings.TrimRight(b.String(), "\n")
+	return strings.TrimRight(b.String(), "\n"), sel
 }
 
 func bar(v, total int) string {
