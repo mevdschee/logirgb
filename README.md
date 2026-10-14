@@ -142,6 +142,8 @@ The protocol details come from reading
 [libratbag](https://github.com/libratbag/libratbag) and the G515 profile notes
 in [logitech-g515-onboard](https://github.com/federico-duppa/logitech-g515-onboard),
 and were checked against real hardware.
+The [research](research/) folder collects the protocol notes, device
+details and hardware test results behind this tool.
 
 ## License
 
