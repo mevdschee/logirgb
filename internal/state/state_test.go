@@ -47,3 +47,18 @@ func TestProfilesDoNotShareValues(t *testing.T) {
 		t.Fatalf("profile 2 color = %06x, want 00ff00", got.Values["color"])
 	}
 }
+
+func TestEnabled(t *testing.T) {
+	d := &Device{}
+	if !d.Enabled(3) {
+		t.Fatal("profiles are enabled by default")
+	}
+	d.SetEnabled(3, false)
+	if d.Enabled(3) || !d.Enabled(2) {
+		t.Fatalf("disabled = %v, want only profile 3", d.Disabled)
+	}
+	d.SetEnabled(3, true)
+	if !d.Enabled(3) || len(d.Disabled) != 0 {
+		t.Fatalf("disabled = %v, want none", d.Disabled)
+	}
+}

@@ -82,7 +82,8 @@ func SaveToProfiles(e *Entry, d *state.Device) (int, string, error) {
 		}
 		profiles := make([]lighting.Profile, count)
 		for p := range profiles {
-			profiles[p] = lighting.Profile{Effects: profileEffects(e, d, p+1), Settings: d.Settings(p + 1)}
+			enabled := d.Enabled(p + 1)
+			profiles[p] = lighting.Profile{Effects: profileEffects(e, d, p+1), Settings: d.Settings(p + 1), Enabled: &enabled}
 		}
 		n, err := e.Ctl.SaveToProfiles(profiles)
 		if err != nil {
@@ -133,7 +134,8 @@ func SaveToProfiles(e *Entry, d *state.Device) (int, string, error) {
 // with onboard profiles a profile gets its own effect for a zone where it
 // differs from the effect for all profiles, a zone without an effect for all
 // profiles takes the active profile's, a zone whose effect cannot be read
-// keeps it, and each profile's report rate and DPI levels are taken too.
+// keeps it, and each profile's report rate, DPI levels and enabled flag are
+// taken too.
 func loadOnboard(e *Entry, d *state.Device) error {
 	if e.Ctl.HasProfileStorage() {
 		sp, ok, err := e.Ctl.ReadProfile()
@@ -182,6 +184,7 @@ func loadOnboard(e *Entry, d *state.Device) error {
 	}
 	for p, prof := range profiles {
 		d.SetSettings(p+1, *prof.Settings)
+		d.SetEnabled(p+1, *prof.Enabled)
 	}
 	return nil
 }

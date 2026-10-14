@@ -304,3 +304,13 @@ the profile's LED block (blue). Writing the profiles and the persistent zone
 effect together kept the logo color through profile switches and a replug.
 The profile sectors were not changed by the persist write (block 0 still
 read `01 00 00 ff 02`).
+
+### Disabled profiles
+
+With the user directory `00 01 01 00 | 00 02 01 00 | 00 03 01 00 | 00 04 01 00 | 00 05 01 00`
+we set byte 2 of the profile 3 entry to `00` (`00 03 00 00`) and resealed
+the CRC. The firmware accepted the write. Polling `8100 4` while pressing
+the profile button 24 times gave 1, 2, 4, 5, 1, ... and never sector 3, so
+byte 2 is the flag that makes the profile button skip a profile; the entry
+does not have to be written as `ff ff ff ff`. Writing `01` again put
+profile 3 back in the cycle. We did not test disabling the active profile.

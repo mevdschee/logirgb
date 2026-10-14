@@ -24,6 +24,9 @@ type Device struct {
 	// ProfileSettings holds the report rate and DPI levels per onboard
 	// profile (1-based); profiles without an entry keep what they store.
 	ProfileSettings map[string]*lighting.ProfileSettings
+	// Disabled marks the onboard profiles (1-based) that the profile
+	// button skips.
+	Disabled map[string]bool
 	// Brightness in device units (G515: 0-100); nil leaves it alone.
 	Brightness *int
 	// IdleTimeout in seconds before the lighting dims; 0 disables dimming.
@@ -140,6 +143,24 @@ func (d *Device) SetSettings(profile int, s lighting.ProfileSettings) {
 	}
 	s.DPI = slices.Clone(s.DPI)
 	d.ProfileSettings[strconv.Itoa(profile)] = &s
+}
+
+// Enabled reports whether the profile button cycles to an onboard profile.
+func (d *Device) Enabled(profile int) bool {
+	return !d.Disabled[strconv.Itoa(profile)]
+}
+
+// SetEnabled sets whether the profile button cycles to an onboard profile.
+func (d *Device) SetEnabled(profile int, enabled bool) {
+	p := strconv.Itoa(profile)
+	if enabled {
+		delete(d.Disabled, p)
+		return
+	}
+	if d.Disabled == nil {
+		d.Disabled = map[string]bool{}
+	}
+	d.Disabled[p] = true
 }
 
 // ProfileNumbers returns the onboard profiles with their own effects, in

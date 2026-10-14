@@ -42,6 +42,7 @@ type rowKind int
 
 const (
 	rowProfile rowKind = iota
+	rowEnabled
 	rowZone
 	rowEffect
 	rowParam
@@ -243,7 +244,10 @@ func (m *model) rows() []row {
 	var rows []row
 	zones := e.Ctl.Zones()
 	if s.profiles > 0 {
-		rows = append(rows, row{kind: rowProfile, label: "Profile"})
+		rows = append(rows,
+			row{kind: rowProfile, label: "Profile"},
+			row{kind: rowEnabled, label: "Enabled"},
+		)
 	}
 	for zi, z := range zones {
 		if len(zones) > 1 {
@@ -493,6 +497,7 @@ var helpSections = []struct {
 		{"lighting", "shows right away, but a profile switch or power cycle undoes it until you press w"},
 		{"DPI, rate", "only change on the mouse when you press w"},
 		{"profiles", "start on the profile the mouse is running, marked active"},
+		{"enabled", "the profile button skips profiles that are not enabled; the active one stays enabled"},
 		{"settings", "are read from the device; edits are kept until you write them with w"},
 		{"*", "marks a device with changes that are not written yet"},
 		{"backups", "w first saves the onboard memory in ~/.local/share/logirgb/backups"},
@@ -613,6 +618,8 @@ func (m *model) adjust(r row, dir int, big bool) {
 		s.profile = (s.profile-1+dir+s.profiles)%s.profiles + 1
 		m.row = min(m.row, len(m.rows())-1)
 		m.previewProfile()
+	case rowEnabled:
+		m.toggleEnabled()
 	case rowEffect:
 		z := zones[s.zone]
 		idx := 0
@@ -718,6 +725,36 @@ func (m *model) adjustSettings(r row, dir int, big bool) {
 	}
 	m.changed()
 	m.setStatus(nil, fmt.Sprintf("profile %d %s changed; press w to store it in the mouse", s.profile, strings.ToLower(r.label)))
+}
+
+// toggleEnabled switches whether the profile button cycles to the selected
+// profile. The active profile and the last enabled one stay enabled.
+func (m *model) toggleEnabled() {
+	_, s := m.current()
+	if s.dev.Enabled(s.profile) {
+		if s.profile == s.active {
+			m.setStatus(fmt.Errorf("profile %d is active; switch to another profile on the mouse first", s.profile))
+			return
+		}
+		enabled := 0
+		for p := 1; p <= s.profiles; p++ {
+			if s.dev.Enabled(p) {
+				enabled++
+			}
+		}
+		if enabled == 1 {
+			m.setStatus(errors.New("at least one profile has to stay enabled"))
+			return
+		}
+	}
+	on := !s.dev.Enabled(s.profile)
+	s.dev.SetEnabled(s.profile, on)
+	m.changed()
+	what := "skips"
+	if on {
+		what = "cycles to"
+	}
+	m.setStatus(nil, fmt.Sprintf("the profile button %s profile %d; press w to store it in the mouse", what, s.profile))
 }
 
 // levelDPI formats the DPI level i of the profile settings.
@@ -1062,6 +1099,11 @@ func (m *model) viewSettings(width int) (string, int) {
 			val = fmt.Sprintf("%d of %d", s.profile, s.profiles)
 			if s.active > 0 && s.profile == s.active {
 				val += "  " + dimStyle.Render("active")
+			}
+		case rowEnabled:
+			val = "yes"
+			if !s.dev.Enabled(s.profile) {
+				val = "no  " + dimStyle.Render("skipped by the profile button")
 			}
 		case rowZone:
 			z := zones[r.zone]

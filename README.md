@@ -74,6 +74,7 @@ logirgb brightness -d g515 50
 logirgb timeouts -d g515 --idle 60 --sleep 300 --dim 50
 logirgb set -d g515 static --color red --preview  # show it without storing it
 logirgb release                                  # drop a preview
+logirgb profiles -d g502 --disable 3,4,5         # profile button cycles 1 and 2
 logirgb reset-profiles -d g502                   # back to the factory profiles
 ```
 
@@ -117,6 +118,11 @@ level the DPI shift button switches to. The DPI range and report rates come
 from the mouse (100-25600 DPI in steps of 50 and 125-1000 Hz on the G502
 HERO). These are not previewed: `w` writes them, and the mouse stays on its
 current DPI level.
+
+A profile can be disabled with the Enabled row in the TUI or with
+`logirgb profiles --disable <n,..>` (`--enable` turns it back on). The profile
+button then skips it; the profile keeps its settings. The active profile and
+the last enabled one cannot be disabled.
 
 - A mouse that still runs its factory (ROM) profiles gets them copied to the
   user profile sectors with only the LED blocks changed. DPI, buttons and

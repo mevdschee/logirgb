@@ -475,10 +475,10 @@ GitHub API rate limit and were not run.
   the entry points at a ROM page), byte 2 is "visible in the profile cycle", and
   a disabled slot is written as a full `ff ff ff ff` entry. Under this reading,
   `00 0N 00 00` (libratbag) means "exists but is skipped by the profile button".
-  That is consistent with Solaar's "Read-Only Profile N" (`fn3 [01 0N]`). We
-  have not tested what the cycle button does with byte 2 = 0, or whether the
-  firmware accepts directory entries that point at `01 0N`. Both are cheap
-  hardware tests.
+  That is consistent with Solaar's "Read-Only Profile N" (`fn3 [01 0N]`). On
+  our G502 SE HERO the cycle button skips an entry with byte 2 = 0 (see
+  hardware-log.md). We have not tested whether the firmware accepts directory
+  entries that point at `01 0N`.
 
 ### Alt LED blocks (230-251)
 

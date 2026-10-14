@@ -164,6 +164,9 @@ type Profile struct {
 	// Settings holds the report rate and DPI levels; nil keeps the stored
 	// ones when writing.
 	Settings *ProfileSettings
+	// Enabled is whether the profile button cycles to the profile; nil
+	// keeps the stored flag when writing.
+	Enabled *bool
 }
 
 // ReadProfiles returns what each onboard profile holds; element i is
@@ -192,7 +195,8 @@ func (c *Controller) ReadProfiles() ([]Profile, error) {
 			return nil, err
 		}
 		s := decodeSettings(data)
-		out = append(out, Profile{Effects: c.decodeLEDs(data), Settings: &s})
+		enabled := entry[1] != 0
+		out = append(out, Profile{Effects: c.decodeLEDs(data), Settings: &s, Enabled: &enabled})
 	}
 	return out, nil
 }
@@ -230,11 +234,12 @@ func (c *Controller) userDirectory(info profileInfo) ([][2]int, error) {
 	return entries, nil
 }
 
-// SaveToProfiles writes zone effects and settings into the onboard
-// profiles, so they survive profile switches and power cycles. profiles[i]
-// is profile i+1. On a device that still runs its factory profiles, these
-// are first copied to the user sectors. It returns the number of profiles
-// written.
+// SaveToProfiles writes zone effects, settings and enabled flags into the
+// onboard profiles, so they survive profile switches and power cycles.
+// profiles[i] is profile i+1. On a device that still runs its factory
+// profiles, these are first copied to the user sectors. The active profile
+// and the last enabled one cannot be disabled. It returns the number of
+// profiles written.
 func (c *Controller) SaveToProfiles(profiles []Profile) (int, error) {
 	if !c.HasOnboardProfiles() {
 		return 0, errors.New("device has no onboard profiles")
@@ -284,6 +289,34 @@ func (c *Controller) SaveToProfiles(profiles []Profile) (int, error) {
 	}
 
 	current, _ := c.dev.Call(hidpp.FeatureOnboardProfiles, 4)
+	flagsChanged := false
+	for i := range entries {
+		if i >= len(profiles) || profiles[i].Enabled == nil {
+			continue
+		}
+		flag := 0
+		if *profiles[i].Enabled {
+			flag = 1
+		}
+		if flag != entries[i][1] {
+			entries[i][1] = flag
+			flagsChanged = true
+		}
+	}
+	if flagsChanged {
+		enabled := 0
+		for i, e := range entries {
+			if e[1] == 0 && current != nil && int(current[1]) == i+1 {
+				return 0, fmt.Errorf("profile %d is active and cannot be disabled", i+1)
+			}
+			if e[1] != 0 {
+				enabled++
+			}
+		}
+		if enabled == 0 {
+			return 0, errors.New("at least one profile has to stay enabled")
+		}
+	}
 	// Re-selecting the profile below resets the DPI to the profile default,
 	// so remember the current DPI level and restore it afterwards.
 	dpi, dpiErr := c.dev.Call(hidpp.FeatureOnboardProfiles, 0xB)
@@ -318,7 +351,8 @@ func (c *Controller) SaveToProfiles(profiles []Profile) (int, error) {
 		}
 	}
 
-	if fromROM {
+	switch {
+	case fromROM:
 		// Only now point the directory at the new user profiles; until this
 		// write the device keeps running the untouched ROM profiles.
 		dir := bytes.Repeat([]byte{0xFF}, info.sectorSize)
@@ -328,6 +362,20 @@ func (c *Controller) SaveToProfiles(profiles []Profile) (int, error) {
 			o += dirEntrySize
 		}
 		copy(dir[o:], []byte{0xFF, 0xFF, 0x00, 0x00})
+		sealSector(dir)
+		if err := c.writeSector(0, dir); err != nil {
+			return len(entries), err
+		}
+	case flagsChanged:
+		// Change only the enabled flags; the profile button skips the
+		// profiles with flag 0.
+		dir, err := c.readSector(0, info.sectorSize)
+		if err != nil {
+			return len(entries), err
+		}
+		for i, e := range entries {
+			dir[i*dirEntrySize+2] = byte(e[1])
+		}
 		sealSector(dir)
 		if err := c.writeSector(0, dir); err != nil {
 			return len(entries), err

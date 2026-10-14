@@ -26,6 +26,8 @@ Usage:
   logirgb brightness [-d dev] <value>
   logirgb timeouts [-d dev] [--idle s] [--sleep s] [--dim percent]
   logirgb release [-d dev]      drop a preview and show the stored lighting
+  logirgb profiles [-d dev] [--enable n,..] [--disable n,..]
+                                show or choose the profiles the profile button cycles through
   logirgb reset-profiles [-d dev]  go back to the factory onboard profiles
   logirgb udev-rule             print the udev rule granting device access
 
@@ -63,6 +65,8 @@ func main() {
 		err = cmdTimeouts(args)
 	case "release":
 		err = cmdRelease(args)
+	case "profiles":
+		err = cmdProfiles(args)
 	case "reset-profiles":
 		err = cmdResetProfiles(args)
 	case "udev-rule":
@@ -398,6 +402,83 @@ func dimPercent(d *state.Device) string {
 		v = *d.DimPercent
 	}
 	return fmt.Sprintf("%d%%", v)
+}
+
+func cmdProfiles(args []string) error {
+	fs := flag.NewFlagSet("profiles", flag.ExitOnError)
+	dev := fs.String("d", "", "device")
+	enable := fs.String("enable", "", "profiles the profile button cycles to, e.g. 1,2")
+	disable := fs.String("disable", "", "profiles the profile button skips, e.g. 3,4,5")
+	fs.Parse(args)
+	on, err := profileList(*enable)
+	if err != nil {
+		return err
+	}
+	off, err := profileList(*disable)
+	if err != nil {
+		return err
+	}
+	return eachDevice(*dev, func(e *app.Entry) error {
+		if !e.Ctl.HasOnboardProfiles() {
+			fmt.Printf("%s: no onboard profiles, skipped\n", e.Name)
+			return nil
+		}
+		d, err := app.Load(e)
+		if err != nil {
+			return fmt.Errorf("read onboard memory: %w", err)
+		}
+		count, err := e.Ctl.ProfileCount()
+		if err != nil {
+			return err
+		}
+		for _, p := range append(on, off...) {
+			if p > count {
+				return fmt.Errorf("no profile %d (device has %d)", p, count)
+			}
+		}
+		active, _ := e.Ctl.ActiveProfile()
+		for _, p := range on {
+			d.SetEnabled(p, true)
+		}
+		for _, p := range off {
+			if p == active {
+				return fmt.Errorf("profile %d is active and cannot be disabled", p)
+			}
+			d.SetEnabled(p, false)
+		}
+		var ps []string
+		for p := 1; p <= count; p++ {
+			v := fmt.Sprintf("%d on", p)
+			if !d.Enabled(p) {
+				v = fmt.Sprintf("%d off", p)
+			}
+			if p == active {
+				v += " (active)"
+			}
+			ps = append(ps, v)
+		}
+		fmt.Printf("%s profiles: %s\n", e.Name, strings.Join(ps, ", "))
+		if len(on) == 0 && len(off) == 0 {
+			return nil
+		}
+		return store(e, d, false)
+	})
+}
+
+// profileList parses a comma separated list of profile numbers.
+func profileList(s string) ([]int, error) {
+	var out []int
+	for _, f := range strings.Split(s, ",") {
+		if f = strings.TrimSpace(f); f == "" {
+			continue
+		}
+		n, err := strconv.Atoi(f)
+		if err != nil || n < 1 {
+			return nil, fmt.Errorf("invalid profile %q", f)
+		}
+		out = append(out, n)
+	}
+	return out, nil
 }
 
 func cmdResetProfiles(args []string) error {
