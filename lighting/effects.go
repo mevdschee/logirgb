@@ -63,18 +63,22 @@ type EffectType struct {
 	// fixed holds bytes the firmware expects at a position regardless of
 	// user input, keyed by offset.
 	fixed map[int]byte
+	// split moves the low byte of a 16 bit parameter to a separate offset;
+	// its slot offset then holds only the high byte.
+	split map[Param]int
 	// overrides adjusts parameter ranges for this effect.
 	overrides map[Param]ParamSpec
 }
 
 // Layouts follow Solaar's LEDEffects table, which was derived from G HUB
-// captures.
+// captures, except 0x04 wave, which follows the Logitech spec.
 var effectTypes = map[uint16]EffectType{
 	0x00: {ID: 0x00, Name: "off"},
 	0x01: {ID: 0x01, Name: "static", slots: []paramSlot{{ParamColor, 0, 3}}, fixed: map[int]byte{3: 0x02}},
 	0x02: {ID: 0x02, Name: "pulse", slots: []paramSlot{{ParamColor, 0, 3}, {ParamSpeed, 3, 1}}},
 	0x03: {ID: 0x03, Name: "cycle", slots: []paramSlot{{ParamPeriod, 5, 2}, {ParamIntensity, 7, 1}}},
-	0x04: {ID: 0x04, Name: "wave", slots: []paramSlot{{ParamPeriod, 6, 2}, {ParamDirection, 9, 1}}},
+	0x04: {ID: 0x04, Name: "wave", slots: []paramSlot{{ParamPeriod, 9, 1}, {ParamDirection, 7, 1}, {ParamIntensity, 8, 1}},
+		split: map[Param]int{ParamPeriod: 6}},
 	0x05: {ID: 0x05, Name: "starlight", slots: []paramSlot{{ParamColor, 0, 3}, {ParamColor2, 3, 3}}},
 	0x0A: {ID: 0x0A, Name: "breathe", slots: []paramSlot{{ParamColor, 0, 3}, {ParamPeriod, 3, 2}, {ParamForm, 5, 1}, {ParamIntensity, 6, 1}}},
 	0x0B: {ID: 0x0B, Name: "ripple", slots: []paramSlot{{ParamColor, 0, 3}, {ParamPeriod, 4, 2}},
@@ -147,6 +151,10 @@ func (e Effect) encode(t EffectType) [10]byte {
 	}
 	for _, s := range t.slots {
 		v := e.Get(t, s.param)
+		if lo, ok := t.split[s.param]; ok {
+			b[s.offset], b[lo] = byte(v>>8), byte(v)
+			continue
+		}
 		for i := 0; i < s.size; i++ {
 			b[s.offset+i] = byte(v >> (8 * (s.size - 1 - i)))
 		}

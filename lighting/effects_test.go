@@ -37,6 +37,8 @@ func TestEncode(t *testing.T) {
 			[10]byte{0x00, 0x00, 0xFF, 0x0B, 0xB8, 0x00, 100}},
 		{Effect{Name: "wave", Values: map[Param]int{ParamDirection: 6}}, 0x16,
 			[10]byte{0, 255, 0, 0, 0, 0, 0x13, 0x88, 100, 6}},
+		{Effect{Name: "wave", Values: map[Param]int{ParamPeriod: 0x1234, ParamDirection: 2, ParamIntensity: 80}}, 0x04,
+			[10]byte{6: 0x34, 7: 2, 8: 80, 9: 0x12}},
 	}
 	for _, c := range cases {
 		if got := c.effect.encode(effectTypes[c.id]); got != c.want {
