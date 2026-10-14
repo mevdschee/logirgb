@@ -24,6 +24,12 @@ comes from:
 | [8100-onboard-profiles.md](8100-onboard-profiles.md) | 0x8100 OnboardProfiles: sectors, directory, profile format, LED blocks, CRC, decoded G502 HERO ROM profiles |
 | [8101-profile-management.md](8101-profile-management.md) | 0x8101 ProfileManagement (G515): files, directory entries, the 99 byte profile with lighting records and idle/sleep timers |
 | [other-protocols-and-tools.md](other-protocols-and-tools.md) | g810-led protocol, LIGHTSYNC, the LED SDK, G HUB behavior, Linux tool comparison, known issues |
+| [projects-g502.md](projects-g502.md) | Source review of G502 HERO lighting and onboard memory projects on GitHub |
+| [projects-ghub-alternatives.md](projects-ghub-alternatives.md) | Source review of G HUB replacements and other HID++ lighting code (0x8071, 0x8081, 0x8101) |
+| [projects-keyboards.md](projects-keyboards.md) | Source review of keyboard LED tools (g810-led and ports, G213, G815/G915/G915 X), with an interface and usage page table |
+
+The project reviews only read source code and the packet captures shipped
+in those repositories; no third-party code was built or run.
 
 ## Logitech specifications
 
