@@ -799,11 +799,12 @@ func (m *model) setStatus(err error, ok ...string) {
 	m.status, m.isError = strings.Join(ok, " "), false
 }
 
-// Styles.
+// Styles, from the Logitech G website's gaming theme: its cyan brand color
+// (a darker shade on light terminals), its grays and its error red.
 var (
-	accent     = lipgloss.AdaptiveColor{Light: "#0057d9", Dark: "#3d8bfd"}
-	dim        = lipgloss.AdaptiveColor{Light: "#7a7a7a", Dark: "#8a8a8a"}
-	errColor   = lipgloss.AdaptiveColor{Light: "#c0362c", Dark: "#ff6b6b"}
+	accent     = lipgloss.AdaptiveColor{Light: "#006e97", Dark: "#00b8fc"}
+	dim        = lipgloss.AdaptiveColor{Light: "#707279", Dark: "#9598a2"}
+	errColor   = lipgloss.AdaptiveColor{Light: "#c0362c", Dark: "#e84f51"}
 	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(accent)
 	paneStyle  = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(dim).Padding(0, 1)
 	focusPane  = paneStyle.BorderForeground(accent)

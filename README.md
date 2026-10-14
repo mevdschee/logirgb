@@ -5,6 +5,8 @@ HID++ 2.0 directly over `/dev/hidraw`, so it needs no G HUB, Solaar, OpenRGB or
 libusb. It has a TUI and a scriptable CLI, and can store your lighting in the
 device itself so it survives power cycles without anything running.
 
+![logirgb TUI](screenshot.png)
+
 Tested with:
 
 | Device | USB ID | Lighting feature | Zones | Brightness | Dim/off on idle |
