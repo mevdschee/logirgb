@@ -78,7 +78,17 @@ func SaveToProfiles(e *Entry, d *config.Device) (int, string, error) {
 	}
 	if !e.Ctl.HasProfileStorage() {
 		n, err := e.Ctl.SaveToProfiles(effects)
-		return n, dir, err
+		if err != nil {
+			return n, dir, err
+		}
+		// The profiles cover profile switches; the persistent zone effect
+		// covers power-up, when the mouse shows its stored zone effect.
+		for zone, eff := range effects {
+			if err := e.Ctl.SetEffectPersistent(zone, eff); err != nil {
+				return n, dir, fmt.Errorf("zone %d: %w", zone, err)
+			}
+		}
+		return n, dir, nil
 	}
 	eff, ok := effects[0]
 	if !ok {

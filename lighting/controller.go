@@ -211,6 +211,21 @@ func (c *Controller) setSWControl(mode []byte) error {
 
 // SetEffect applies an effect to a zone.
 func (c *Controller) SetEffect(zone int, e Effect) error {
+	return c.setEffect(zone, e, false)
+}
+
+// SetEffectPersistent applies an effect and also stores it in the device's
+// non-volatile memory (0x8070 persistence byte 1: RAM and EEPROM), so it is
+// shown again after a power cycle. On the G502 HERO a profile switch still
+// loads the LED blocks of the onboard profile; see SaveToProfiles.
+func (c *Controller) SetEffectPersistent(zone int, e Effect) error {
+	if c.feature != hidpp.FeatureColorLEDEffects {
+		return errors.New("persistent zone effects are only supported on 0x8070 devices")
+	}
+	return c.setEffect(zone, e, true)
+}
+
+func (c *Controller) setEffect(zone int, e Effect, persist bool) error {
 	if zone < 0 || zone >= len(c.zones) {
 		return fmt.Errorf("no zone %d (device has %d)", zone, len(c.zones))
 	}
@@ -226,7 +241,12 @@ func (c *Controller) SetEffect(zone int, e Effect) error {
 		_, err := c.dev.Call(c.feature, 1, append(payload, 0x01)...)
 		return err
 	}
-	_, err := c.dev.Call(c.feature, 3, payload...)
+	// Trailing byte: 0 = RAM only, 1 = RAM and EEPROM.
+	var p byte
+	if persist {
+		p = 0x01
+	}
+	_, err := c.dev.Call(c.feature, 3, append(payload, p)...)
 	return err
 }
 

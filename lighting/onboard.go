@@ -179,6 +179,9 @@ func (c *Controller) SaveToProfiles(effects map[int]Effect) (int, error) {
 	}
 
 	current, _ := c.dev.Call(hidpp.FeatureOnboardProfiles, 4)
+	// Re-selecting the profile below resets the DPI to the profile default,
+	// so remember the current DPI level and restore it afterwards.
+	dpi, dpiErr := c.dev.Call(hidpp.FeatureOnboardProfiles, 0xB)
 
 	for i, entry := range entries {
 		sector := entry[0]
@@ -227,6 +230,9 @@ func (c *Controller) SaveToProfiles(effects map[int]Effect) (int, error) {
 	if current != nil {
 		if idx := int(current[1]); idx >= 1 && idx <= len(entries) {
 			c.dev.Call(hidpp.FeatureOnboardProfiles, 3, 0x00, byte(idx))
+			if dpiErr == nil {
+				c.dev.Call(hidpp.FeatureOnboardProfiles, 0xC, dpi[0])
+			}
 		}
 	}
 	return len(entries), nil

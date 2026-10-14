@@ -107,6 +107,8 @@ it, so `save` writes the lighting into all onboard profiles:
 - Existing user profiles (for example from G HUB or Piper) keep everything
   except their LED blocks. Profiles with a bad checksum are not touched.
 - The profile directory is written last.
+- The zone effects are also stored with the 0x8070 persistence flag, which
+  is what the mouse shows at power-up, before any profile switch.
 
 `logirgb reset-profiles -d g502` clears the profile directory so the mouse
 goes back to its factory profiles.
