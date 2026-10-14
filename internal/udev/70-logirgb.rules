@@ -1,0 +1,2 @@
+# Give the logged-in user access to Logitech HID++ devices (used by logirgb).
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", TAG+="uaccess"
