@@ -211,10 +211,12 @@ whenever the firmware loads a profile, with or without `fn8 [01]`.
 Zones as they appear on the mouse:
 
 - **Zone 1 (location logo):** the G logo, the main visible light.
-- **Zone 0 (location primary):** described as the DPI indicator. On this
-  unit the three DPI LEDs are off and only light up blue for a moment when
-  the DPI or profile buttons are pressed. Setting zone 0 to off, or to any
-  color, made no visible difference.
+- **Zone 0 (location primary):** the DPI indicator. The three DPI LEDs are
+  off and only light up for a moment when the DPI or profile buttons are
+  pressed, in the zone 0 color. Setting zone 0 to static red made the DPI
+  flash red (first tests looked like "no visible difference" because the
+  LEDs are dark until a button press). Re-sending the current DPI index with
+  `8100 c [index]` also triggers the flash.
 
 ### Profile switching
 

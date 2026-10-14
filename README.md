@@ -12,10 +12,9 @@ Tested with:
 | G515 TKL (wired) | 046d:c358 | 0x8071 RGBEffects + 0x8101 profile | 1 | yes (0x8040) | yes, in firmware |
 | G502 HERO / G502 SE HERO | 046d:c08b | 0x8070 ColorLEDEffects + 0x8100 onboard profiles | 2 (primary, logo) | no | no |
 
-On the G502 HERO the logo (zone 1) is the light you see. The firmware also
-accepts settings for zone 0 ("primary"), but on the tested mouse that has no
-visible effect: the DPI LEDs are a blue status light that the firmware only
-shows when you press the profile/DPI buttons.
+On the G502 HERO zone 1 is the logo and zone 0 ("primary") is the color of
+the DPI LEDs. Those only light up briefly when you press a DPI or profile
+button, to show the DPI level, and then flash in the zone 0 color.
 
 Other devices that expose 0x8070 or 0x8071 should work too. Devices are found
 by scanning `/sys/class/hidraw` for Logitech nodes that declare the HID++ long
