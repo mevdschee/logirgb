@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/mevdschee/logirgb/hidpp"
 	"github.com/mevdschee/logirgb/internal/app"
 	"github.com/mevdschee/logirgb/internal/config"
 	"github.com/mevdschee/logirgb/lighting"
@@ -99,7 +100,7 @@ func newModel() (*model, error) {
 
 func (m *model) load() error {
 	app.Close(m.entries)
-	entries, err := app.Scan(0x0A)
+	entries, err := app.Scan(hidpp.DefaultSoftwareID)
 	if err != nil {
 		return err
 	}

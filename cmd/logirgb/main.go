@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mevdschee/logirgb/hidpp"
 	"github.com/mevdschee/logirgb/internal/app"
 	"github.com/mevdschee/logirgb/internal/config"
 	"github.com/mevdschee/logirgb/internal/tui"
@@ -81,7 +82,7 @@ func main() {
 
 // scan discovers devices and warns about the ones we cannot access.
 func scan() ([]*app.Entry, error) {
-	entries, err := app.Scan(0x0A)
+	entries, err := app.Scan(hidpp.DefaultSoftwareID)
 	if err != nil {
 		return nil, err
 	}

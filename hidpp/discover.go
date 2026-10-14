@@ -49,7 +49,7 @@ func Discover() ([]Info, error) {
 				}
 			}
 		}
-		if info.VendorID != VendorLogitech {
+		if info.VendorID != VendorLogitech || isWebcam(info.ProductID) {
 			continue
 		}
 		desc, err := os.ReadFile(filepath.Join(node, "device", "report_descriptor"))
@@ -62,8 +62,20 @@ func Discover() ([]Info, error) {
 	return out, nil
 }
 
+// hasLongReport reports whether the descriptor declares the HID++ long
+// report (ID 0x11) in a vendor collection. Most devices use usage page
+// 0xFF00; older G keyboards (G213, G512/G513, G815, G910, G Pro) use 0xFF43.
 func hasLongReport(desc []byte) bool {
-	// Usage Page (0xFF00) followed somewhere by Report ID (0x11).
-	i := bytes.Index(desc, []byte{0x06, 0x00, 0xFF})
-	return i >= 0 && bytes.Contains(desc[i:], []byte{0x85, reportLong})
+	for _, page := range [][]byte{{0x06, 0x00, 0xFF}, {0x06, 0x43, 0xFF}} {
+		if i := bytes.Index(desc, page); i >= 0 && bytes.Contains(desc[i:], []byte{0x85, reportLong}) {
+			return true
+		}
+	}
+	return false
+}
+
+// isWebcam excludes Logitech webcams, which can lock up when probed with
+// HID++ (product IDs 0x0800-0x09FF).
+func isWebcam(pid uint16) bool {
+	return pid >= 0x0800 && pid <= 0x09FF
 }

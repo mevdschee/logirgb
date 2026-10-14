@@ -22,6 +22,11 @@ const (
 	// USB or Bluetooth rather than through a receiver.
 	DeviceIndexDirect = 0xFF
 
+	// DefaultSoftwareID tags our requests. It avoids the IDs known to be
+	// used by the kernel (0x01), OpenRGB (0x07), libratbag (0x08), several
+	// G HUB replacements (0x0A), Solaar (0x0B) and G HUB (0x0C, 0x0D).
+	DefaultSoftwareID = 0x0E
+
 	defaultTimeout = 2 * time.Second
 )
 
@@ -98,13 +103,16 @@ func Open(info Info) (*Device, error) {
 		}
 		return nil, fmt.Errorf("open %s: %w", info.Path, err)
 	}
-	d := &Device{Info: info, SoftwareID: 0x0A, fd: fd, features: map[uint16]byte{FeatureRoot: 0}}
+	d := &Device{Info: info, SoftwareID: DefaultSoftwareID, fd: fd, features: map[uint16]byte{FeatureRoot: 0}}
 
 	// A busy device occasionally misses the first ping, so the direct index
 	// gets a few attempts before receiver slots are tried.
-	for _, idx := range []byte{DeviceIndexDirect, DeviceIndexDirect, DeviceIndexDirect, 1, 2, 3, 4, 5, 6} {
+	for i, idx := range []byte{DeviceIndexDirect, DeviceIndexDirect, DeviceIndexDirect, 1, 2, 3, 4, 5, 6, 7} {
 		d.Index = idx
-		if _, err := d.call(0, 1, 500*time.Millisecond, 0, 0, 0x5A); err == nil {
+		// The ping echoes its third byte; a changing value makes sure the
+		// reply belongs to this ping and not to an earlier one.
+		payload := byte(0x5A + i)
+		if r, err := d.call(0, 1, 500*time.Millisecond, 0, 0, payload); err == nil && r[2] == payload {
 			return d, nil
 		}
 	}
