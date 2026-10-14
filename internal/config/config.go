@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"github.com/mevdschee/logitech-rgb/lighting"
+	"github.com/mevdschee/logirgb/lighting"
 )
 
 // Device holds the settings for one device model.

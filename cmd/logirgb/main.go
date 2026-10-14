@@ -9,11 +9,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mevdschee/logitech-rgb/internal/app"
-	"github.com/mevdschee/logitech-rgb/internal/config"
-	"github.com/mevdschee/logitech-rgb/internal/tui"
-	"github.com/mevdschee/logitech-rgb/internal/udev"
-	"github.com/mevdschee/logitech-rgb/lighting"
+	"github.com/mevdschee/logirgb/internal/app"
+	"github.com/mevdschee/logirgb/internal/config"
+	"github.com/mevdschee/logirgb/internal/tui"
+	"github.com/mevdschee/logirgb/internal/udev"
+	"github.com/mevdschee/logirgb/lighting"
 )
 
 const usage = `logirgb - control the RGB lighting of Logitech devices

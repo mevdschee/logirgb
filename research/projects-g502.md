@@ -439,7 +439,7 @@ that shows DPI on a SteelSeries OLED) and `Benonsen/Logitech-LED-Changer`
 ("0x8070 onboard", "g502 onboard memory", "0x8070 g502" code search) hit the
 GitHub API rate limit and were not run.
 
-## Findings for logitech-rgb
+## Findings for logirgb
 
 ### LED block order in profiles
 

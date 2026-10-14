@@ -3,7 +3,7 @@
 This note covers third party keyboard lighting tools on GitHub (g810-led and
 its ports, G213 scripts, macOS and Windows tools, and newer G815, G915 and
 G915 X tools). For each one it records the transport, the exact bytes and
-the quirks, and then lists what logitech-rgb would need to drive these
+the quirks, and then lists what logirgb would need to drive these
 keyboards. Scanned on 2026-10-14. Every repository was shallow-cloned and
 read as text only. Nothing was built, installed or run. Two published packet
 capture sets (G213Colors `pcaps/`, MatMoul/g810-led-resources `dumps/`) were
@@ -274,7 +274,7 @@ modifiers are held. All lighting goes through the Logitech LED SDK via
 (`LogiLedInit`, `LogiLedSetLightingForKeyWithKeyName`, `LogiLedFlashSingleKey`,
 `LogiLedPulseSingleKey`, `LogiLedStopEffects`). The repository contains the
 20 KB SDK DLL as a binary and two large GIFs. Nothing about the wire
-protocol. Not useful for logitech-rgb except as a reminder that on Windows
+protocol. Not useful for logirgb except as a reminder that on Windows
 the G815/G915 per-key path goes through G HUB.
 
 ## SebiTimeWaster/G213Colors
@@ -612,9 +612,9 @@ returns corrupt data.
 
 Searches for G713, G715 and G512 Linux lighting found nothing relevant
 (results were ASUS ROG laptops and unrelated projects). No public tool
-targets the G515 TKL wired (c358) except Solaar, OpenRGB and logitech-rgb.
+targets the G515 TKL wired (c358) except Solaar, OpenRGB and logirgb.
 
-## Findings for logitech-rgb
+## Findings for logirgb
 
 ### New
 
@@ -641,14 +641,14 @@ targets the G515 TKL wired (c358) except Solaar, OpenRGB and logitech-rgb.
   (`msg[0]` must be 0x10 or 0x11).
 - **Solid colour on 0x8080 without 0x12.** 0x8080 fn4 `[blockId u16, R, G, B]`
   fills a whole key block in one 20 byte report (keyleds, LGS), followed by
-  fn5 commit. For "set the whole keyboard to one colour" logitech-rgb could
+  fn5 commit. For "set the whole keyboard to one colour" logirgb could
   support the G410/G512/G513/G610/G810/G Pro family with only long reports:
   fn0 to read the block flags, fn4 per block (0x0001 keys, 0x0002 media,
   0x0004 G-keys, 0x0010 logo, 0x0040 indicators), fn5 commit. Per-key
   colours still need 0x12 or one key per fn3 call in a 0x11 report (the
   logo form shows fn3 accepts a single quad in 20 bytes).
 - **Logo latching.** On the G Pro the logo only accepts the 20 byte fn3
-  form. If logitech-rgb adds 0x12 per-key frames, send keyType 0x0010 in a
+  form. If logirgb adds 0x12 per-key frames, send keyType 0x0010 in a
   0x11 report.
 - **g810-led "startup mode" is 0x8070 setNvConfig(bootUpEffect).** State 1
   plays the stored effect at power on, 2 keeps the last colours. This is a
@@ -668,7 +668,7 @@ targets the G515 TKL wired (c358) except Solaar, OpenRGB and logitech-rgb.
   but on interface 1 / page 0xFF43 for the G815 and interface 2 / page 0xFF00
   for the G915 family. Behind a receiver (c541, c545, c547) the keyboard is
   device index 0x01 and every feature index shifts by one compared with the
-  cable (OpenRGB, g810-led #198). logitech-rgb already resolves indexes at
+  cable (OpenRGB, g810-led #198). logirgb already resolves indexes at
   runtime; it needs receiver support (device index 1 on the receiver node)
   for the wireless case.
 - **SW control before per-key on 0x8081 keyboards.** On the G915 X, edge and
@@ -681,9 +681,9 @@ targets the G515 TKL wired (c358) except Solaar, OpenRGB and logitech-rgb.
   manageSwControl between `01 03 05` (active) and `01 03 03` (idle). This is
   the host side of the idle handling we only knew from the spec.
 - **Interleaving.** 0x8080/0x8081 updates are multi-packet and only shown on
-  commit. Two writers (for example logitech-rgb and OpenRGB) produce mixed
+  commit. Two writers (for example logirgb and OpenRGB) produce mixed
   colours (openrgb-presets). Our hidraw `flock` style locking, as
-  logitech-g515-onboard does, would at least stop two logitech-rgb processes
+  logitech-g515-onboard does, would at least stop two logirgb processes
   from interleaving.
 
 ### Confirms
@@ -691,7 +691,7 @@ targets the G515 TKL wired (c358) except Solaar, OpenRGB and logitech-rgb.
 - Hardcoded indexes differ per model and per link: G815 0x8071 0x0f and
   0x8081 0x10 (wired) vs 0x0b for 0x8081 behind the G915 receiver; G915
   wired 0x09/0x0a vs receiver 0x0a/0x0b; G915 X 0x08/0x09; G213 0x8070 at
-  0x0c vs G513 0x8070 at 0x0d. Runtime IRoot lookup, as logitech-rgb does,
+  0x0c vs G513 0x8070 at 0x0d. Runtime IRoot lookup, as logirgb does,
   is the only safe approach.
 - The 0x8081 zone ID map in `8080-8081-per-key-lighting.md` (usage - 3,
   modifiers usage - 0x78, logo 0xd2, indicator 0x99, media 0x9b-0x9e, G-keys
@@ -722,7 +722,7 @@ targets the G515 TKL wired (c358) except Solaar, OpenRGB and logitech-rgb.
 - peppapig450/logitech-led-control uses the G910 key header for the G513
   family; g810-led does not.
 
-### What logitech-rgb needs, in order
+### What logirgb needs, in order
 
 1. Discovery: accept 0xFF43 as well as 0xFF00 (or any vendor page with
    report 0x11). This alone makes the G213, G413, G512/G513, G610, G810,

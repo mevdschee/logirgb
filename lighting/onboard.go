@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/mevdschee/logitech-rgb/hidpp"
+	"github.com/mevdschee/logirgb/hidpp"
 )
 
 // Onboard profiles (0x8100) live in flash sectors. Sector 0 is the profile

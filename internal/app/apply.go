@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mevdschee/logitech-rgb/internal/config"
-	"github.com/mevdschee/logitech-rgb/lighting"
+	"github.com/mevdschee/logirgb/internal/config"
+	"github.com/mevdschee/logirgb/lighting"
 )
 
 // Apply pushes the stored settings of a device to the hardware.

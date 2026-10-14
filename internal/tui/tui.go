@@ -12,9 +12,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/mevdschee/logitech-rgb/internal/app"
-	"github.com/mevdschee/logitech-rgb/internal/config"
-	"github.com/mevdschee/logitech-rgb/lighting"
+	"github.com/mevdschee/logirgb/internal/app"
+	"github.com/mevdschee/logirgb/internal/config"
+	"github.com/mevdschee/logirgb/lighting"
 )
 
 // Run starts the TUI.

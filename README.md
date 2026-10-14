@@ -1,4 +1,4 @@
-# logitech-rgb
+# logirgb
 
 `logirgb` sets the RGB lighting of Logitech G devices on Linux. It talks
 HID++ 2.0 directly over `/dev/hidraw`, so it needs no G HUB, Solaar, OpenRGB or
@@ -24,7 +24,7 @@ report.
 ## Install
 
 ```bash
-go install github.com/mevdschee/logitech-rgb/cmd/logirgb@latest
+go install github.com/mevdschee/logirgb/cmd/logirgb@latest
 ```
 
 ### Permissions
@@ -117,8 +117,8 @@ The protocol code is usable on its own:
 
 ```go
 import (
-	"github.com/mevdschee/logitech-rgb/hidpp"
-	"github.com/mevdschee/logitech-rgb/lighting"
+	"github.com/mevdschee/logirgb/hidpp"
+	"github.com/mevdschee/logirgb/lighting"
 )
 
 infos, _ := hidpp.Discover()

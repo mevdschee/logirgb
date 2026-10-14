@@ -12,10 +12,10 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/mevdschee/logitech-rgb/hidpp"
-	"github.com/mevdschee/logitech-rgb/internal/config"
-	"github.com/mevdschee/logitech-rgb/internal/udev"
-	"github.com/mevdschee/logitech-rgb/lighting"
+	"github.com/mevdschee/logirgb/hidpp"
+	"github.com/mevdschee/logirgb/internal/config"
+	"github.com/mevdschee/logirgb/internal/udev"
+	"github.com/mevdschee/logirgb/lighting"
 )
 
 // ErrPermission marks a device the current user cannot open.

@@ -1,4 +1,4 @@
-module github.com/mevdschee/logitech-rgb
+module github.com/mevdschee/logirgb
 
 go 1.26.8
 

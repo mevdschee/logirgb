@@ -499,7 +499,7 @@ Software ID 2, and 3 for requests that do not wait for a reply.
 DKMS fork of the kernel driver (6.5 base) for G PRO / G923 wheels and force
 feedback. No lighting additions; the kernel still uses software ID 0x01.
 
-## Findings for logitech-rgb
+## Findings for logirgb
 
 New:
 

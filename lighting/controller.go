@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/mevdschee/logitech-rgb/hidpp"
+	"github.com/mevdschee/logirgb/hidpp"
 )
 
 // Zone is an independently controllable lighting area.

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"hash/crc32"
 
-	"github.com/mevdschee/logitech-rgb/hidpp"
+	"github.com/mevdschee/logirgb/hidpp"
 )
 
 // Keyboards with 0x8071 RGBEffects (G515) keep their onboard profile in

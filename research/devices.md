@@ -189,7 +189,7 @@ The plain G502 HERO and the black/white "SE" edition share PID C08B. usb.ids cal
 - OpenRGB: a udev rule for 0a78, handled by the unified HID++ 2.0 controller. HID++ is on usage page 0xFF43. The device is "0x8070 ZONE-ONLY (no 0x8080: G560/G933 ...)". The claim is just `SetSWControl(1,1)`. Its collection "has no short report" and "rejects the 0x10 write", so all requests must use long reports (0x11). [SRC]
 - Not in Solaar or libratbag. [SRC]
 
-## Implementation notes for logitech-rgb
+## Implementation notes for logirgb
 
 1. Pick the protocol by feature presence, not by PID. 0x8070 means zone effects (function 0x30 SetZoneEffect, 0x80 SetSWControl). 0x8071 means effects (function 0x10 SetEffectByIndex, 0x50 control). Add 0x8081 for per-LED colour. Function numbers come from OpenRGB `LogitechProtocolCommon.h`. [SRC]
 2. On G502 HERO-class mice, expect the "primary" zone to be a DPI status indicator. Writing a static colour to it may not show persistently. [HW][WEB]
