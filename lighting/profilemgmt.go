@@ -220,6 +220,85 @@ func (c *Controller) StoreProfile(e Effect, dimPercent, idle, sleep int) error {
 	return c.activateProfile(p)
 }
 
+// StoredProfile is the lighting a keyboard's onboard profile holds.
+type StoredProfile struct {
+	Effect     Effect
+	DimPercent int // the idle effect relative to Effect, 0 if unknown
+	Idle       int // seconds, 0 for never
+	Sleep      int // seconds, 0 for never
+}
+
+// ReadProfile returns the lighting stored in the keyboard's onboard
+// profile, the user profile if there is one, else the factory profile. ok
+// is false when the stored effect is not one this zone supports (the factory
+// profile uses effects 0x18 and 0x19).
+func (c *Controller) ReadProfile() (sp StoredProfile, ok bool, err error) {
+	if !c.HasProfileStorage() || len(c.zones) != 1 {
+		return sp, false, errors.New("device has no profile storage")
+	}
+	f, err := c.pmSnapshot()
+	if err != nil {
+		return sp, false, err
+	}
+	p := f.userProfile
+	if p == nil {
+		p = f.factoryProfile
+	}
+	// Flag bit 0 selects record 0 instead of 1, bit 1 record 2 instead of 3
+	// (see research/8101-profile-management.md).
+	active, idle := 1, 3
+	if p[pmFlags]&1 != 0 {
+		active = 0
+	}
+	if p[pmFlags]&2 != 0 {
+		idle = 2
+	}
+	rec := func(slot int) []byte { return p[pmRecords+slot*ledSize:][:ledSize] }
+	ze, found := c.zoneEffect(0, rec(active)[0])
+	if !found {
+		return sp, false, nil
+	}
+	sp.Effect = decode(ze.Type, rec(active)[1:])
+	sp.Idle, sp.Sleep = decodeTimer(p[2:4]), decodeTimer(p[4:6])
+	if r := rec(idle); r[0] == rec(active)[0] {
+		sp.DimPercent = dimRatio(ze.Type, sp.Effect, decode(ze.Type, r[1:]))
+	}
+	return sp, true, nil
+}
+
+// zoneEffect finds the zone's effect with the given effect ID.
+func (c *Controller) zoneEffect(zone int, id byte) (ZoneEffect, bool) {
+	for _, ze := range c.zones[zone].Effects {
+		if ze.Type.ID == uint16(id) {
+			return ze, true
+		}
+	}
+	return ZoneEffect{}, false
+}
+
+// dimRatio estimates the percentage that turned e into the dimmed effect d,
+// the inverse of dimmed, from the brightest color channel or the intensity.
+func dimRatio(t EffectType, e, d Effect) int {
+	for _, spec := range t.Params() {
+		switch {
+		case spec.Name.IsColor():
+			a, b := maxChannel(e.Get(t, spec.Name)), maxChannel(d.Get(t, spec.Name))
+			if a > 0 {
+				return min(100, (b*100+a/2)/a)
+			}
+		case spec.Name == ParamIntensity:
+			if a := e.Get(t, spec.Name); a > 0 {
+				return min(100, d.Get(t, spec.Name)*100/a)
+			}
+		}
+	}
+	return 0
+}
+
+func maxChannel(c int) int {
+	return max(c>>16&0xFF, c>>8&0xFF, c&0xFF)
+}
+
 // activateProfile hands the lighting back to the firmware and makes it
 // load the stored user profile.
 func (c *Controller) activateProfile(p []byte) error {

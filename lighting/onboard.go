@@ -155,6 +155,49 @@ func (c *Controller) ActiveProfile() (int, error) {
 	return sector, nil
 }
 
+// ReadProfiles returns the zone effects stored in each onboard profile;
+// element i holds profile i+1. Zones whose LED block holds an effect the
+// zone does not support are left out.
+func (c *Controller) ReadProfiles() ([]map[int]Effect, error) {
+	if !c.HasOnboardProfiles() {
+		return nil, errors.New("device has no onboard profiles")
+	}
+	info, err := c.profileInfo()
+	if err != nil {
+		return nil, err
+	}
+	entries, err := c.userDirectory(info)
+	if err != nil {
+		return nil, err
+	}
+	if entries == nil {
+		for i := 1; i <= info.count; i++ {
+			entries = append(entries, [2]int{romSectorBase + i, 1})
+		}
+	}
+	var out []map[int]Effect
+	for _, entry := range entries {
+		data, err := c.readSector(entry[0], info.sectorSize)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c.decodeLEDs(data))
+	}
+	return out, nil
+}
+
+// decodeLEDs reads the zone effects from a profile's LED blocks.
+func (c *Controller) decodeLEDs(data []byte) map[int]Effect {
+	effects := map[int]Effect{}
+	for zone := range c.zones {
+		led := data[ledOffset+c.ledSlot(zone)*ledSize:][:ledSize]
+		if ze, ok := c.zoneEffect(zone, led[0]); ok {
+			effects[zone] = decode(ze.Type, led[1:])
+		}
+	}
+	return effects
+}
+
 // userDirectory returns the user profile sectors and their enabled flags,
 // or nil when the device is running its ROM profiles.
 func (c *Controller) userDirectory(info profileInfo) ([][2]int, error) {

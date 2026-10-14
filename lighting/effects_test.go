@@ -2,6 +2,7 @@ package lighting
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 )
 
@@ -83,5 +84,28 @@ func TestDimmed(t *testing.T) {
 	}
 	if got := d.Values[ParamPeriod]; got != 3000 {
 		t.Errorf("period = %d, want 3000", got)
+	}
+}
+
+func TestDecode(t *testing.T) {
+	for _, tc := range []struct {
+		id  uint16
+		eff Effect
+	}{
+		{0x01, Effect{Name: "static", Values: map[Param]int{ParamColor: 0xFF4080}}},
+		{0x0A, Effect{Name: "breathe", Values: map[Param]int{ParamColor: 0x00DCFF, ParamPeriod: 8000, ParamForm: 2, ParamIntensity: 50}}},
+		{0x04, Effect{Name: "wave", Values: map[Param]int{ParamPeriod: 4000, ParamDirection: 6, ParamIntensity: 80}}},
+	} {
+		typ := effectTypes[tc.id]
+		b := tc.eff.encode(typ)
+		if got := decode(typ, b[:]); !reflect.DeepEqual(got, tc.eff) {
+			t.Errorf("decode(encode(%v)) = %v", tc.eff, got)
+		}
+	}
+	// ROM profile: cycle 8000 ms with intensity 0, which reads as the default.
+	got := decode(effectTypes[0x03], []byte{0, 0, 0, 0, 0, 0x1f, 0x40, 0, 0, 0})
+	want := Effect{Name: "cycle", Values: map[Param]int{ParamPeriod: 8000}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("decode ROM cycle = %v, want %v", got, want)
 	}
 }

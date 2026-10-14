@@ -88,7 +88,10 @@ Changes made with `set`, `brightness` or the TUI are a live preview: they go
 to the device's RAM and are lost on a power cycle. `logirgb save` (or `w` in
 the TUI, or `set --save`) stores them in the device's onboard memory. The
 previous contents are backed up to `~/.local/share/logirgb/backups/` first,
-and every write is verified by reading it back.
+and every write is verified by reading it back. The TUI starts from what
+the onboard memory holds (the G515 profile's lighting, dim level and
+timeouts, and the lighting of each G502 profile), so `w` writes back what
+you see.
 
 **G515 TKL.** The keyboard's onboard profile holds the lighting, a dimmed
 copy of it and the idle and sleep timeouts. After `save` the firmware runs

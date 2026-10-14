@@ -67,6 +67,16 @@ func (d *Device) SetProfileZone(profile, i int, e lighting.Effect) {
 	d.Profiles[p][strconv.Itoa(i)] = e
 }
 
+// ClearProfileZone drops a profile's own effect for a zone, so it uses the
+// effect for all profiles again.
+func (d *Device) ClearProfileZone(profile, i int) {
+	p := strconv.Itoa(profile)
+	delete(d.Profiles[p], strconv.Itoa(i))
+	if len(d.Profiles[p]) == 0 {
+		delete(d.Profiles, p)
+	}
+}
+
 // SetAllProfilesZone stores the effect for a zone in every onboard profile,
 // dropping the per profile effects for that zone.
 func (d *Device) SetAllProfilesZone(i int, e lighting.Effect) {

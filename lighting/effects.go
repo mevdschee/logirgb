@@ -162,6 +162,31 @@ func (e Effect) encode(t EffectType) [10]byte {
 	return b
 }
 
+// decode reads an effect from its parameter block, the inverse of encode.
+// Values outside a parameter's range (the factory profiles store intensity
+// 0) are left out, so they read as the default.
+func decode(t EffectType, b []byte) Effect {
+	e := Effect{Name: t.Name}
+	specs := map[Param]ParamSpec{}
+	for _, spec := range t.Params() {
+		specs[spec.Name] = spec
+	}
+	for _, s := range t.slots {
+		var v int
+		if lo, ok := t.split[s.param]; ok {
+			v = int(b[s.offset])<<8 | int(b[lo])
+		} else {
+			for i := 0; i < s.size; i++ {
+				v = v<<8 | int(b[s.offset+i])
+			}
+		}
+		if spec := specs[s.param]; v >= spec.Min && v <= spec.Max {
+			e.Set(s.param, v)
+		}
+	}
+	return e
+}
+
 // ParseColor accepts "#rrggbb", "rrggbb", "r,g,b" or a few color names.
 func ParseColor(s string) (int, error) {
 	s = strings.ToLower(strings.TrimSpace(s))

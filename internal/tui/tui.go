@@ -137,6 +137,9 @@ func (m *model) initState(e *app.Entry) *devState {
 		s.profiles, _ = e.Ctl.ProfileCount()
 		s.active, _ = e.Ctl.ActiveProfile()
 	}
+	if err := app.LoadProfiles(e, saved); err != nil {
+		m.setStatus(fmt.Errorf("%s: read onboard memory: %w", e.Name, err))
+	}
 	for p := 0; p <= s.profiles; p++ {
 		var effects []lighting.Effect
 		for i, z := range e.Ctl.Zones() {

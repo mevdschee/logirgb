@@ -123,6 +123,58 @@ func SaveToProfiles(e *Entry, d *config.Device) (int, string, error) {
 	return 1, dir, e.Ctl.SetTimers(idle, sleep)
 }
 
+// LoadProfiles takes the lighting stored in the device's onboard memory
+// into d, so it shows and is written back as stored. On a keyboard with
+// profile storage that is the effect, dim level and timeouts. On a mouse
+// with onboard profiles a profile gets its own effect for a zone where it
+// differs from the effect for all profiles, and a zone without an effect
+// for all profiles takes the active profile's. d is only changed in memory.
+func LoadProfiles(e *Entry, d *config.Device) error {
+	if e.Ctl.HasProfileStorage() {
+		sp, ok, err := e.Ctl.ReadProfile()
+		if err != nil || !ok {
+			return err
+		}
+		d.SetZone(0, sp.Effect)
+		if sp.DimPercent > 0 {
+			d.DimPercent = config.IntPtr(sp.DimPercent)
+		}
+		d.IdleTimeout = config.IntPtr(sp.Idle)
+		d.SleepTimeout = config.IntPtr(sp.Sleep)
+		return nil
+	}
+	if !e.Ctl.HasOnboardProfiles() {
+		return nil
+	}
+	profiles, err := e.Ctl.ReadProfiles()
+	if err != nil {
+		return err
+	}
+	active, err := e.Ctl.ActiveProfile()
+	if err != nil || active < 1 || active > len(profiles) {
+		active = 1
+	}
+	for i, z := range e.Ctl.Zones() {
+		all, ok := d.Zone(i)
+		if !ok {
+			if all, ok = profiles[active-1][i]; ok {
+				d.SetZone(i, all)
+			}
+		}
+		for p, effects := range profiles {
+			eff, stored := effects[i]
+			switch {
+			case !stored:
+			case ok && z.Same(eff, all):
+				d.ClearProfileZone(p+1, i)
+			default:
+				d.SetProfileZone(p+1, i, eff)
+			}
+		}
+	}
+	return nil
+}
+
 // profileEffects returns the configured zone effects of an onboard profile
 // (1-based), or of all profiles for profile 0.
 func profileEffects(e *Entry, d *config.Device, profile int) map[int]lighting.Effect {
