@@ -578,6 +578,9 @@ func (m *model) viewSettings() string {
 		switch r.kind {
 		case rowZone:
 			val = fmt.Sprintf("%s (%d/%d)", zones[s.zone].Location, s.zone+1, len(zones))
+			if d := zones[s.zone].Description; d != "" {
+				val += "  " + dimStyle.Render(d)
+			}
 		case rowEffect:
 			val = eff.Name
 		case rowParam:

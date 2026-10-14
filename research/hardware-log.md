@@ -216,7 +216,9 @@ Zones as they appear on the mouse:
   pressed, in the zone 0 color. Setting zone 0 to static red made the DPI
   flash red (first tests looked like "no visible difference" because the
   LEDs are dark until a button press). Re-sending the current DPI index with
-  `8100 c [index]` also triggers the flash.
+  `8100 c [index]` also triggers the flash. The zone 0 color only applies
+  to the DPI buttons: after a profile button press the DPI LEDs show blue,
+  whatever zone 0 is set to.
 
 ### Profile switching
 

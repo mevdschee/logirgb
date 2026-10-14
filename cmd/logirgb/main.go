@@ -118,6 +118,9 @@ func cmdList(args []string) error {
 		saved := cfg.Device(e.Key)
 		for zi, z := range ctl.Zones() {
 			fmt.Printf("   zone %d (%s)", zi, z.Location)
+			if z.Description != "" {
+				fmt.Printf(": %s", z.Description)
+			}
 			if eff, ok := saved.Zone(zi); ok {
 				fmt.Printf("  current: %s", describe(z, eff))
 			}

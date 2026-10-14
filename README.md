@@ -14,7 +14,9 @@ Tested with:
 
 On the G502 HERO zone 1 is the logo and zone 0 ("primary") is the color of
 the DPI LEDs. Those only light up briefly when you press a DPI or profile
-button, to show the DPI level, and then flash in the zone 0 color.
+button, to show the DPI level. After a DPI button press they flash in the
+zone 0 color, after a profile button press they show blue regardless of
+zone 0.
 
 Other devices that expose 0x8070 or 0x8071 should work too. Devices are found
 by scanning `/sys/class/hidraw` for Logitech nodes that declare the HID++ long

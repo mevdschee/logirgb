@@ -11,7 +11,9 @@ import (
 type Zone struct {
 	Index    byte
 	Location string
-	Effects  []ZoneEffect
+	// Description says where the zone is on the device, when known.
+	Description string
+	Effects     []ZoneEffect
 }
 
 // ZoneEffect is an effect the zone supports, with its device specific index.
@@ -44,6 +46,15 @@ var zoneLocations = map[uint16]string{
 	0x09: "primary 4",
 	0x0A: "primary 5",
 	0x0B: "primary 6",
+}
+
+// zoneDescriptions describes the zones of known devices, by product ID and
+// zone index.
+var zoneDescriptions = map[uint16][]string{
+	// G502 HERO: the DPI LEDs stay dark and flash in the zone 0 color when a
+	// DPI button is pressed. After a profile button press they show blue,
+	// whatever the zone 0 color.
+	0xC08B: {"DPI LEDs, flash on DPI button press", "G logo"},
 }
 
 // Controller exposes the lighting capabilities of one device.
@@ -118,6 +129,9 @@ func (c *Controller) enumerate() error {
 		zone := Zone{Index: byte(z), Location: zoneLocations[loc]}
 		if zone.Location == "" {
 			zone.Location = fmt.Sprintf("zone %d", z)
+		}
+		if d := zoneDescriptions[c.dev.Info.ProductID]; z < len(d) {
+			zone.Description = d[z]
 		}
 		for e := 0; e < int(info[3]); e++ {
 			var r []byte
