@@ -63,13 +63,8 @@ const DefaultDimPercent = 50
 // firmware, which then dims and switches off by itself. It returns the
 // number of profiles written and the backup directory.
 func SaveToProfiles(e *Entry, d *config.Device) (int, string, error) {
-	effects := map[int]lighting.Effect{}
-	for i := range e.Ctl.Zones() {
-		if eff, ok := d.Zone(i); ok {
-			effects[i] = eff
-		}
-	}
-	if len(effects) == 0 {
+	effects := profileEffects(e, d, 0)
+	if len(effects) == 0 && len(d.Profiles) == 0 {
 		return 0, "", fmt.Errorf("no effects configured yet, set one first")
 	}
 	dir, err := backup(e)
@@ -77,12 +72,25 @@ func SaveToProfiles(e *Entry, d *config.Device) (int, string, error) {
 		return 0, "", fmt.Errorf("backup: %w", err)
 	}
 	if !e.Ctl.HasProfileStorage() {
-		n, err := e.Ctl.SaveToProfiles(effects)
+		count, err := e.Ctl.ProfileCount()
+		if err != nil {
+			return 0, dir, err
+		}
+		profiles := make([]map[int]lighting.Effect, count)
+		for p := range profiles {
+			profiles[p] = profileEffects(e, d, p+1)
+		}
+		n, err := e.Ctl.SaveToProfiles(profiles)
 		if err != nil {
 			return n, dir, err
 		}
 		// The profiles cover profile switches; the persistent zone effect
 		// covers power-up, when the mouse shows its stored zone effect.
+		// Use the active profile's lighting, which the mouse runs again
+		// after power-up.
+		if active, err := e.Ctl.ActiveProfile(); err == nil && active >= 1 && active <= count {
+			effects = profiles[active-1]
+		}
 		for zone, eff := range effects {
 			if err := e.Ctl.SetEffectPersistent(zone, eff); err != nil {
 				return n, dir, fmt.Errorf("zone %d: %w", zone, err)
@@ -113,6 +121,18 @@ func SaveToProfiles(e *Entry, d *config.Device) (int, string, error) {
 	}
 	// The stored timers only load on power-up; set the running ones too.
 	return 1, dir, e.Ctl.SetTimers(idle, sleep)
+}
+
+// profileEffects returns the configured zone effects of an onboard profile
+// (1-based), or of all profiles for profile 0.
+func profileEffects(e *Entry, d *config.Device, profile int) map[int]lighting.Effect {
+	effects := map[int]lighting.Effect{}
+	for i := range e.Ctl.Zones() {
+		if eff, ok := d.ProfileZone(profile, i); ok {
+			effects[i] = eff
+		}
+	}
+	return effects
 }
 
 // backup saves the device's onboard memory under

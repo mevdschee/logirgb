@@ -116,6 +116,45 @@ func sealSector(data []byte) {
 	data[n-2], data[n-1] = byte(crc>>8), byte(crc)
 }
 
+// ProfileCount returns the number of onboard profiles.
+func (c *Controller) ProfileCount() (int, error) {
+	if !c.HasOnboardProfiles() {
+		return 0, errors.New("device has no onboard profiles")
+	}
+	info, err := c.profileInfo()
+	return info.count, err
+}
+
+// ActiveProfile returns the number (1-based) of the profile the device is
+// running.
+func (c *Controller) ActiveProfile() (int, error) {
+	if !c.HasOnboardProfiles() {
+		return 0, errors.New("device has no onboard profiles")
+	}
+	r, err := c.dev.Call(hidpp.FeatureOnboardProfiles, 4)
+	if err != nil {
+		return 0, err
+	}
+	sector := int(r[0])<<8 | int(r[1])
+	if sector >= romSectorBase {
+		return sector - romSectorBase, nil
+	}
+	info, err := c.profileInfo()
+	if err != nil {
+		return 0, err
+	}
+	entries, err := c.userDirectory(info)
+	if err != nil {
+		return 0, err
+	}
+	for i, e := range entries {
+		if e[0] == sector {
+			return i + 1, nil
+		}
+	}
+	return sector, nil
+}
+
 // userDirectory returns the user profile sectors and their enabled flags,
 // or nil when the device is running its ROM profiles.
 func (c *Controller) userDirectory(info profileInfo) ([][2]int, error) {
@@ -137,11 +176,12 @@ func (c *Controller) userDirectory(info profileInfo) ([][2]int, error) {
 	return entries, nil
 }
 
-// SaveToProfiles writes the given zone effects into every onboard profile,
-// so they survive profile switches and power cycles. On a device that still
-// runs its factory profiles, these are first copied to the user sectors.
-// It returns the number of profiles written.
-func (c *Controller) SaveToProfiles(effects map[int]Effect) (int, error) {
+// SaveToProfiles writes zone effects into the onboard profiles, so they
+// survive profile switches and power cycles. effects[i] holds the zone
+// effects for profile i+1; zones without an effect keep their stored LED
+// block. On a device that still runs its factory profiles, these are first
+// copied to the user sectors. It returns the number of profiles written.
+func (c *Controller) SaveToProfiles(effects []map[int]Effect) (int, error) {
 	if !c.HasOnboardProfiles() {
 		return 0, errors.New("device has no onboard profiles")
 	}
@@ -154,17 +194,20 @@ func (c *Controller) SaveToProfiles(effects map[int]Effect) (int, error) {
 	}
 
 	// Build the LED blocks first so invalid input fails before any write.
-	leds := map[int][]byte{}
-	for zone, e := range effects {
-		if zone < 0 || zone >= len(c.zones) {
-			return 0, fmt.Errorf("no zone %d", zone)
+	leds := make([]map[int][]byte, len(effects))
+	for p, zones := range effects {
+		leds[p] = map[int][]byte{}
+		for zone, e := range zones {
+			if zone < 0 || zone >= len(c.zones) {
+				return 0, fmt.Errorf("no zone %d", zone)
+			}
+			ze, ok := c.zones[zone].Find(e.Name)
+			if !ok {
+				return 0, fmt.Errorf("zone %d does not support %q", zone, e.Name)
+			}
+			params := e.encode(ze.Type)
+			leds[p][zone] = append([]byte{byte(ze.Type.ID)}, params[:]...)
 		}
-		ze, ok := c.zones[zone].Find(e.Name)
-		if !ok {
-			return 0, fmt.Errorf("zone %d does not support %q", zone, e.Name)
-		}
-		params := e.encode(ze.Type)
-		leds[zone] = append([]byte{byte(ze.Type.ID)}, params[:]...)
 	}
 
 	entries, err := c.userDirectory(info)
@@ -199,8 +242,10 @@ func (c *Controller) SaveToProfiles(effects map[int]Effect) (int, error) {
 		if !fromROM && !validSector(data) {
 			return i, fmt.Errorf("profile %d (sector %#04x) has a bad checksum, not touching it", i+1, sector)
 		}
-		for zone, led := range leds {
-			copy(data[ledOffset+c.ledSlot(zone)*ledSize:], led)
+		if i < len(leds) {
+			for zone, led := range leds[i] {
+				copy(data[ledOffset+c.ledSlot(zone)*ledSize:], led)
+			}
 		}
 		sealSector(data)
 		if err := c.writeSector(sector, data); err != nil {

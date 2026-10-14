@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 
 	"github.com/mevdschee/logirgb/lighting"
@@ -16,6 +17,9 @@ import (
 type Device struct {
 	Name  string                     `json:"name,omitempty"`
 	Zones map[string]lighting.Effect `json:"zones,omitempty"`
+	// Profiles overrides the zone effects per onboard profile (1-based),
+	// for devices that store lighting in each profile (G502).
+	Profiles map[string]map[string]lighting.Effect `json:"profiles,omitempty"`
 	// Brightness in device units (G515: 0-100); nil leaves it alone.
 	Brightness *int `json:"brightness,omitempty"`
 	// IdleTimeout in seconds before the lighting dims; 0 disables dimming.
@@ -40,6 +44,53 @@ func (d *Device) SetZone(i int, e lighting.Effect) {
 		d.Zones = map[string]lighting.Effect{}
 	}
 	d.Zones[strconv.Itoa(i)] = e
+}
+
+// ProfileZone returns the effect for a zone in an onboard profile: the
+// profile's own effect if it has one, else the effect for all profiles.
+func (d *Device) ProfileZone(profile, i int) (lighting.Effect, bool) {
+	if e, ok := d.Profiles[strconv.Itoa(profile)][strconv.Itoa(i)]; ok {
+		return e, true
+	}
+	return d.Zone(i)
+}
+
+// SetProfileZone stores the effect for a zone in one onboard profile.
+func (d *Device) SetProfileZone(profile, i int, e lighting.Effect) {
+	if d.Profiles == nil {
+		d.Profiles = map[string]map[string]lighting.Effect{}
+	}
+	p := strconv.Itoa(profile)
+	if d.Profiles[p] == nil {
+		d.Profiles[p] = map[string]lighting.Effect{}
+	}
+	d.Profiles[p][strconv.Itoa(i)] = e
+}
+
+// SetAllProfilesZone stores the effect for a zone in every onboard profile,
+// dropping the per profile effects for that zone.
+func (d *Device) SetAllProfilesZone(i int, e lighting.Effect) {
+	d.SetZone(i, e)
+	z := strconv.Itoa(i)
+	for p, zones := range d.Profiles {
+		delete(zones, z)
+		if len(zones) == 0 {
+			delete(d.Profiles, p)
+		}
+	}
+}
+
+// ProfileNumbers returns the onboard profiles with their own effects, in
+// order.
+func (d *Device) ProfileNumbers() []int {
+	var out []int
+	for p := range d.Profiles {
+		if n, err := strconv.Atoi(p); err == nil {
+			out = append(out, n)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 // Config is the whole configuration file.

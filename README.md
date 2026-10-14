@@ -64,6 +64,7 @@ logirgb list                                     # devices, zones, effects, curr
 logirgb set static --color orange                # all zones of all devices
 logirgb set -d g515 breathe --color blue --period 3000
 logirgb set -d g502 -z 1 cycle --period 8000
+logirgb set -d g502 -p 2 -z 1 static --color green  # logo of onboard profile 2 only
 logirgb set -d g515 wave --direction left --period 4000
 logirgb brightness -d g515 50
 logirgb timeouts -d g515 --idle 60 --sleep 300 --dim 50
@@ -100,7 +101,12 @@ does not dim; `save` hands control back, and `o` in the TUI (or
 
 **G502 HERO.** The mouse re-applies the lighting of its onboard profile
 whenever you switch profiles (the button behind the scroll wheel) or replug
-it, so `save` writes the lighting into all onboard profiles:
+it, so `save` writes the lighting into all onboard profiles. Each profile can
+have its own lighting: pick it with the Profile row in the TUI (`all` or a
+profile number; the active one is marked) or with `set -p <n>`. Changes made
+under `all` apply to every profile and replace the per profile lighting of
+that zone.
+
 
 - A mouse that still runs its factory (ROM) profiles gets them copied to the
   user profile sectors with only the LED blocks changed. DPI, buttons and
@@ -108,8 +114,9 @@ it, so `save` writes the lighting into all onboard profiles:
 - Existing user profiles (for example from G HUB or Piper) keep everything
   except their LED blocks. Profiles with a bad checksum are not touched.
 - The profile directory is written last.
-- The zone effects are also stored with the 0x8070 persistence flag, which
-  is what the mouse shows at power-up, before any profile switch.
+- The active profile's zone effects are also stored with the 0x8070
+  persistence flag, which is what the mouse shows at power-up, before any
+  profile switch.
 
 `logirgb reset-profiles -d g502` clears the profile directory so the mouse
 goes back to its factory profiles.

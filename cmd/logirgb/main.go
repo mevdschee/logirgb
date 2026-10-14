@@ -125,6 +125,11 @@ func cmdList(args []string) error {
 				fmt.Printf("  current: %s", describe(z, eff))
 			}
 			fmt.Println()
+			for _, p := range saved.ProfileNumbers() {
+				if eff, ok := saved.Profiles[strconv.Itoa(p)][strconv.Itoa(zi)]; ok {
+					fmt.Printf("     profile %d: %s\n", p, describe(z, eff))
+				}
+			}
 			for _, ze := range z.Effects {
 				var ps []string
 				for _, p := range ze.Type.Params() {
@@ -177,6 +182,7 @@ func cmdSet(args []string) error {
 	fs := flag.NewFlagSet("set", flag.ExitOnError)
 	dev := fs.String("d", "", "device")
 	zone := fs.Int("z", -1, "zone number (default: all zones)")
+	profile := fs.Int("p", 0, "onboard profile number, for devices that store lighting per profile (default: all profiles)")
 	color := fs.String("color", "", "color: #rrggbb, r,g,b or a name like red")
 	color2 := fs.String("color2", "", "second color (starlight)")
 	period := fs.Int("period", -1, "effect period in ms")
@@ -256,14 +262,25 @@ func cmdSet(args []string) error {
 		if err := e.Ctl.Claim(); err != nil {
 			return fmt.Errorf("%s: %w", e.Name, err)
 		}
+		if *profile > 0 && !e.Ctl.HasOnboardProfiles() {
+			return fmt.Errorf("%s: no per profile lighting", e.Name)
+		}
 		d := cfg.Device(e.Key)
 		d.Name = e.Name
 		for _, z := range zones {
 			if err := e.Ctl.SetEffect(z, eff); err != nil {
 				return fmt.Errorf("%s: %w", e.Name, err)
 			}
-			d.SetZone(z, eff)
-			fmt.Printf("%s zone %d: %s\n", e.Name, z, describe(e.Ctl.Zones()[z], eff))
+			where := fmt.Sprintf("zone %d", z)
+			if *profile > 0 {
+				d.SetProfileZone(*profile, z, eff)
+				where = fmt.Sprintf("profile %d %s", *profile, where)
+			} else if e.Ctl.HasOnboardProfiles() {
+				d.SetAllProfilesZone(z, eff)
+			} else {
+				d.SetZone(z, eff)
+			}
+			fmt.Printf("%s %s: %s\n", e.Name, where, describe(e.Ctl.Zones()[z], eff))
 		}
 		if *store && (e.Ctl.HasOnboardProfiles() || e.Ctl.HasProfileStorage()) {
 			if err := save(e, d); err != nil {

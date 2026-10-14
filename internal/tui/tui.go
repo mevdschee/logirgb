@@ -39,7 +39,8 @@ const (
 type rowKind int
 
 const (
-	rowZone rowKind = iota
+	rowProfile rowKind = iota
+	rowZone
 	rowEffect
 	rowParam
 	rowBrightness
@@ -56,8 +57,13 @@ type row struct {
 
 // devState is what the TUI shows for one device.
 type devState struct {
-	zone       int
-	effects    []lighting.Effect // per zone
+	// profile is the onboard profile being edited (1-based), 0 for all.
+	profile  int
+	profiles int
+	active   int
+	zone     int
+	// effects holds the zone effects per profile, index 0 for all.
+	effects    [][]lighting.Effect
 	brightness int
 	bmin, bmax int
 	idle       int
@@ -127,15 +133,23 @@ func (m *model) initState(e *app.Entry) *devState {
 	}
 	saved := m.cfg.Device(e.Key)
 	s.claimed, _ = e.Ctl.Claimed()
-	for i, z := range e.Ctl.Zones() {
-		eff, ok := saved.Zone(i)
-		if !ok {
-			eff = lighting.Effect{Name: "static"}
-			if _, has := z.Find("static"); !has && len(z.Effects) > 0 {
-				eff.Name = z.Effects[0].Type.Name
+	if e.Ctl.HasOnboardProfiles() {
+		s.profiles, _ = e.Ctl.ProfileCount()
+		s.active, _ = e.Ctl.ActiveProfile()
+	}
+	for p := 0; p <= s.profiles; p++ {
+		var effects []lighting.Effect
+		for i, z := range e.Ctl.Zones() {
+			eff, ok := saved.ProfileZone(p, i)
+			if !ok {
+				eff = lighting.Effect{Name: "static"}
+				if _, has := z.Find("static"); !has && len(z.Effects) > 0 {
+					eff.Name = z.Effects[0].Type.Name
+				}
 			}
+			effects = append(effects, eff)
 		}
-		s.effects = append(s.effects, eff)
+		s.effects = append(s.effects, effects)
 	}
 	if e.Ctl.HasBrightness() {
 		s.bmin, s.bmax, _ = e.Ctl.BrightnessRange()
@@ -157,6 +171,12 @@ func (m *model) initState(e *app.Entry) *devState {
 	return s
 }
 
+// effect returns the effect being edited: the selected zone in the selected
+// profile.
+func (s *devState) effect() *lighting.Effect {
+	return &s.effects[s.profile][s.zone]
+}
+
 func (m *model) Init() tea.Cmd { return nil }
 
 func (m *model) current() (*app.Entry, *devState) {
@@ -173,11 +193,14 @@ func (m *model) rows() []row {
 	}
 	var rows []row
 	zones := e.Ctl.Zones()
+	if s.profiles > 0 {
+		rows = append(rows, row{kind: rowProfile, label: "Profile"})
+	}
 	if len(zones) > 1 {
 		rows = append(rows, row{kind: rowZone, label: "Zone"})
 	}
 	rows = append(rows, row{kind: rowEffect, label: "Effect"})
-	if ze, ok := zones[s.zone].Find(s.effects[s.zone].Name); ok {
+	if ze, ok := zones[s.zone].Find(s.effect().Name); ok {
 		for _, p := range ze.Type.Params() {
 			rows = append(rows, row{kind: rowParam, label: p.Label, param: p})
 		}
@@ -297,7 +320,7 @@ func (m *model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		r := rows[m.row]
 		if r.kind == rowParam && r.param.Name.IsColor() {
 			_, s := m.current()
-			eff := s.effects[s.zone]
+			eff := s.effect()
 			ze, _ := m.entries[m.dev].Ctl.Zones()[s.zone].Find(eff.Name)
 			m.input.SetValue(lighting.FormatColor(eff.Get(ze.Type, r.param.Name)))
 			m.input.CursorEnd()
@@ -324,7 +347,7 @@ func (m *model) updateEditing(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.input.Blur()
 		r := m.rows()[m.row]
 		_, s := m.current()
-		eff := &s.effects[s.zone]
+		eff := s.effect()
 		eff.Set(r.param.Name, v)
 		m.applyEffect()
 		return m, nil
@@ -359,6 +382,10 @@ func (m *model) adjust(r row, dir int, big bool) {
 	e, s := m.current()
 	zones := e.Ctl.Zones()
 	switch r.kind {
+	case rowProfile:
+		s.profile = (s.profile + dir + s.profiles + 1) % (s.profiles + 1)
+		m.row = min(m.row, len(m.rows())-1)
+		m.previewProfile()
 	case rowZone:
 		s.zone = (s.zone + dir + len(zones)) % len(zones)
 		m.row = min(m.row, len(m.rows())-1)
@@ -366,16 +393,16 @@ func (m *model) adjust(r row, dir int, big bool) {
 		z := zones[s.zone]
 		idx := 0
 		for i, ze := range z.Effects {
-			if ze.Type.Name == s.effects[s.zone].Name {
+			if ze.Type.Name == s.effect().Name {
 				idx = i
 			}
 		}
 		idx = (idx + dir + len(z.Effects)) % len(z.Effects)
 		// Keep colors and other values when switching effects.
-		s.effects[s.zone].Name = z.Effects[idx].Type.Name
+		s.effect().Name = z.Effects[idx].Type.Name
 		m.applyEffect()
 	case rowParam:
-		eff := &s.effects[s.zone]
+		eff := s.effect()
 		ze, _ := zones[s.zone].Find(eff.Name)
 		cur := eff.Get(ze.Type, r.param.Name)
 		var v int
@@ -441,7 +468,7 @@ func cyclePalette(cur, dir int) int {
 
 func (m *model) applyEffect() {
 	e, s := m.current()
-	eff := s.effects[s.zone]
+	eff := *s.effect()
 	err := e.Ctl.Claim()
 	if err == nil {
 		err = e.Ctl.SetEffect(s.zone, eff)
@@ -450,10 +477,43 @@ func (m *model) applyEffect() {
 		s.claimed = true
 		d := m.cfg.Device(e.Key)
 		d.Name = e.Name
-		d.SetZone(s.zone, eff)
+		if s.profile == 0 {
+			d.SetAllProfilesZone(s.zone, eff)
+			for p := range s.effects {
+				s.effects[p][s.zone] = eff
+			}
+		} else {
+			d.SetProfileZone(s.profile, s.zone, eff)
+		}
 		m.save()
 	}
-	m.setStatus(err, fmt.Sprintf("%s: %s", e.Ctl.Zones()[s.zone].Location, eff.Name))
+	where := e.Ctl.Zones()[s.zone].Location
+	if s.profile > 0 {
+		where = fmt.Sprintf("profile %d %s", s.profile, where)
+	}
+	m.setStatus(err, fmt.Sprintf("%s: %s", where, eff.Name))
+}
+
+// previewProfile shows the lighting of the selected profile on the device,
+// without changing the config.
+func (m *model) previewProfile() {
+	e, s := m.current()
+	if err := e.Ctl.Claim(); err != nil {
+		m.setStatus(err)
+		return
+	}
+	for zone, eff := range s.effects[s.profile] {
+		if err := e.Ctl.SetEffect(zone, eff); err != nil {
+			m.setStatus(err)
+			return
+		}
+	}
+	s.claimed = true
+	if s.profile == 0 {
+		m.setStatus(nil, "editing all profiles; changes replace the per profile lighting")
+	} else {
+		m.setStatus(nil, fmt.Sprintf("editing profile %d", s.profile))
+	}
 }
 
 func (m *model) save() {
@@ -571,11 +631,19 @@ func (m *model) viewSettings() string {
 	b.WriteString("\n")
 
 	zones := e.Ctl.Zones()
-	eff := s.effects[s.zone]
+	eff := *s.effect()
 	ze, _ := zones[s.zone].Find(eff.Name)
 	for i, r := range m.rows() {
 		var val string
 		switch r.kind {
+		case rowProfile:
+			val = "all"
+			if s.profile > 0 {
+				val = fmt.Sprintf("%d of %d", s.profile, s.profiles)
+			}
+			if s.active > 0 && s.profile == s.active {
+				val += "  " + dimStyle.Render("active")
+			}
 		case rowZone:
 			val = fmt.Sprintf("%s (%d/%d)", zones[s.zone].Location, s.zone+1, len(zones))
 			if d := zones[s.zone].Description; d != "" {
@@ -612,7 +680,7 @@ func (m *model) viewSettings() string {
 		}
 	}
 	if e.Ctl.HasOnboardProfiles() {
-		b.WriteString("\n" + dimStyle.Render("changes last until a profile switch; press w to store them in all onboard profiles"))
+		b.WriteString("\n" + dimStyle.Render("changes last until a profile switch; press w to store them in the onboard profiles"))
 	}
 	if e.Ctl.HasProfileStorage() {
 		b.WriteString("\n" + dimStyle.Render("the keyboard only dims and turns off stored lighting; press w to store"))
