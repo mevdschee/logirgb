@@ -16,8 +16,10 @@ import (
 // Profile (99 bytes):
 //
 //	0-1    header 01 01
-//	2-3    idle timeout in seconds (the firmware dims), big endian
-//	4-5    sleep timeout in seconds (the firmware turns the lighting off)
+//	2-3    idle timeout in seconds (the firmware dims), big endian,
+//	       0xFFFF for never
+//	4-5    sleep timeout in seconds (the firmware turns the lighting off),
+//	       0xFFFF for never
 //	6-29   name
 //	30-73  four 11 byte [effect ID, params] lighting records; with the flags
 //	       byte at 0 the firmware shows record 1 and switches to record 3
@@ -188,8 +190,8 @@ func (c *Controller) StoreProfile(e Effect, dimPercent, idle, sleep int) error {
 		base = f.factoryProfile
 	}
 	p := bytes.Clone(base)
-	p[2], p[3] = byte(idle>>8), byte(idle)
-	p[4], p[5] = byte(sleep>>8), byte(sleep)
+	encodeTimer(p[2:4], idle)
+	encodeTimer(p[4:6], sleep)
 	clear(p[pmRecords : pmRecords+4*ledSize])
 	record := func(slot int, eff Effect) {
 		params := eff.encode(ze.Type)

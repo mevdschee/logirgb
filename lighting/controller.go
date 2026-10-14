@@ -275,18 +275,41 @@ func (c *Controller) HasTimers() bool {
 	return c.feature == hidpp.FeatureRGBEffects
 }
 
-// Timers returns the firmware idle (dim) and sleep (off) timeouts in seconds.
+// timerNever is the wire value for a timeout that never expires. A literal 0
+// is not "disabled" to the firmware.
+const timerNever = 0xFFFF
+
+// Timers returns the firmware idle (dim) and sleep (off) timeouts in
+// seconds, with 0 meaning never.
 func (c *Controller) Timers() (idle, sleep int, err error) {
 	r, err := c.dev.Call(c.feature, 7, 0x00)
 	if err != nil {
 		return 0, 0, err
 	}
-	return int(r[3])<<8 | int(r[4]), int(r[5])<<8 | int(r[6]), nil
+	return decodeTimer(r[3:5]), decodeTimer(r[5:7]), nil
 }
 
-// SetTimers stores the idle and sleep timeouts in firmware.
+// SetTimers stores the idle and sleep timeouts in firmware; 0 means never.
 func (c *Controller) SetTimers(idle, sleep int) error {
-	_, err := c.dev.Call(c.feature, 7, 0x01, 0x00, 0x00,
-		byte(idle>>8), byte(idle), byte(sleep>>8), byte(sleep))
+	params := make([]byte, 7)
+	params[0] = 0x01
+	encodeTimer(params[3:5], idle)
+	encodeTimer(params[5:7], sleep)
+	_, err := c.dev.Call(c.feature, 7, params...)
 	return err
+}
+
+func encodeTimer(b []byte, s int) {
+	if s <= 0 || s >= timerNever {
+		s = timerNever
+	}
+	b[0], b[1] = byte(s>>8), byte(s)
+}
+
+func decodeTimer(b []byte) int {
+	s := int(b[0])<<8 | int(b[1])
+	if s == timerNever {
+		return 0
+	}
+	return s
 }
