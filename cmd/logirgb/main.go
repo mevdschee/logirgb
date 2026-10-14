@@ -23,12 +23,11 @@ Usage:
   logirgb list                  list devices, zones, effects and settings
   logirgb set [flags] <effect>  set a lighting effect
   logirgb brightness [-d dev] <value>
-  logirgb timeouts [-d dev] [--idle s] [--sleep s] [--dim value]
+  logirgb timeouts [-d dev] [--idle s] [--sleep s] [--dim percent]
   logirgb apply                 re-apply the saved settings to all devices
   logirgb release [-d dev]      hand lighting back to the onboard profile
-  logirgb save [-d dev]         store the saved effects in the onboard profiles (G502)
+  logirgb save [-d dev]         store lighting (and G515 timers) in onboard memory
   logirgb reset-profiles [-d dev]  go back to the factory onboard profiles
-  logirgb daemon                apply settings and handle dim/sleep on idle
   logirgb udev-rule             print the udev rule granting device access
 
 Devices (-d) are selected by list number, hidraw path or name fragment
@@ -66,8 +65,6 @@ func main() {
 		err = cmdSave(args)
 	case "reset-profiles":
 		err = cmdResetProfiles(args)
-	case "daemon":
-		err = cmdDaemon(args)
 	case "udev-rule":
 		fmt.Print(udev.Rule)
 	case "help", "-h", "--help":
@@ -144,8 +141,6 @@ func cmdList(args []string) error {
 			if err == nil {
 				fmt.Printf("   firmware timers: idle %ds, sleep %ds\n", idle, sleep)
 			}
-			fmt.Printf("   saved: idle %s, sleep %s, dim brightness %s\n",
-				optSeconds(saved.IdleTimeout), optSeconds(saved.SleepTimeout), optInt(saved.DimBrightness))
 		}
 	}
 	return nil
@@ -174,13 +169,6 @@ func optSeconds(v *int) string {
 	return fmt.Sprintf("%ds", *v)
 }
 
-func optInt(v *int) string {
-	if v == nil {
-		return "unset"
-	}
-	return strconv.Itoa(*v)
-}
-
 func cmdSet(args []string) error {
 	fs := flag.NewFlagSet("set", flag.ExitOnError)
 	dev := fs.String("d", "", "device")
@@ -193,6 +181,7 @@ func cmdSet(args []string) error {
 	saturation := fs.Int("saturation", -1, "saturation 0-255")
 	direction := fs.String("direction", "", "wave direction: right, left, up, down, center-out, center-in, ...")
 	form := fs.String("form", "", "breathe waveform: sine, square, triangle, sawtooth, shark-fin, exponential")
+	store := fs.Bool("save", false, "also store the lighting in onboard memory")
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: logirgb set [flags] <off|static|pulse|breathe|cycle|wave|ripple|starlight>")
 		fs.PrintDefaults()
@@ -272,6 +261,11 @@ func cmdSet(args []string) error {
 			d.SetZone(z, eff)
 			fmt.Printf("%s zone %d: %s\n", e.Name, z, describe(e.Ctl.Zones()[z], eff))
 		}
+		if *store && (e.Ctl.HasOnboardProfiles() || e.Ctl.HasProfileStorage()) {
+			if err := save(e, d); err != nil {
+				return fmt.Errorf("%s: %w", e.Name, err)
+			}
+		}
 	}
 	return cfg.Save()
 }
@@ -313,11 +307,11 @@ func cmdTimeouts(args []string) error {
 	dev := fs.String("d", "", "device")
 	idle := fs.Int("idle", -1, "seconds of inactivity before dimming, 0 disables")
 	sleep := fs.Int("sleep", -1, "seconds of inactivity before the lighting turns off, 0 disables")
-	dim := fs.Int("dim", -1, "brightness while dimmed")
+	dim := fs.Int("dim", -1, "brightness while dimmed, in percent of the normal lighting")
 	fs.Parse(args)
 	return eachDevice(*dev, func(e *app.Entry, d *config.Device) error {
 		if !e.Ctl.HasTimers() {
-			fmt.Printf("%s: no idle detection in firmware, skipped\n", e.Name)
+			fmt.Printf("%s: no idle timers, skipped\n", e.Name)
 			return nil
 		}
 		if *idle >= 0 {
@@ -327,13 +321,18 @@ func cmdTimeouts(args []string) error {
 			d.SleepTimeout = config.IntPtr(*sleep)
 		}
 		if *dim >= 0 {
-			d.DimBrightness = config.IntPtr(*dim)
+			if *dim > 100 {
+				return fmt.Errorf("dim must be 0-100")
+			}
+			d.DimPercent = config.IntPtr(*dim)
 		}
 		if err := app.ApplyTimers(e, d); err != nil {
 			return err
 		}
-		fmt.Printf("%s: idle %s, sleep %s, dim brightness %s\n", e.Name,
-			optSeconds(d.IdleTimeout), optSeconds(d.SleepTimeout), optInt(d.DimBrightness))
+		fmt.Printf("%s: dim to %s after %s, off after %s\n", e.Name, dimPercent(d), optSeconds(d.IdleTimeout), optSeconds(d.SleepTimeout))
+		if e.Ctl.HasProfileStorage() {
+			fmt.Printf("%s: run \"logirgb save\" to store this in the keyboard\n", e.Name)
+		}
 		return nil
 	})
 }
@@ -369,17 +368,36 @@ func cmdSave(args []string) error {
 	dev := fs.String("d", "", "device")
 	fs.Parse(args)
 	return eachDevice(*dev, func(e *app.Entry, d *config.Device) error {
-		if !e.Ctl.HasOnboardProfiles() {
-			fmt.Printf("%s: no onboard profiles, skipped\n", e.Name)
+		if !e.Ctl.HasOnboardProfiles() && !e.Ctl.HasProfileStorage() {
+			fmt.Printf("%s: no onboard memory, skipped\n", e.Name)
 			return nil
 		}
-		n, err := app.SaveToProfiles(e, d)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("%s: lighting stored in %d onboard profiles\n", e.Name, n)
-		return nil
+		return save(e, d)
 	})
+}
+
+func save(e *app.Entry, d *config.Device) error {
+	n, dir, err := app.SaveToProfiles(e, d)
+	if dir != "" {
+		fmt.Printf("%s: previous onboard memory backed up to %s\n", e.Name, dir)
+	}
+	if err != nil {
+		return err
+	}
+	if e.Ctl.HasProfileStorage() {
+		fmt.Printf("%s: lighting and timers stored; the keyboard now dims and turns off by itself\n", e.Name)
+	} else {
+		fmt.Printf("%s: lighting stored in %d onboard profiles\n", e.Name, n)
+	}
+	return nil
+}
+
+func dimPercent(d *config.Device) string {
+	v := app.DefaultDimPercent
+	if d.DimPercent != nil {
+		v = *d.DimPercent
+	}
+	return fmt.Sprintf("%d%%", v)
 }
 
 func cmdResetProfiles(args []string) error {
@@ -388,7 +406,7 @@ func cmdResetProfiles(args []string) error {
 	fs.Parse(args)
 	return eachDevice(*dev, func(e *app.Entry, d *config.Device) error {
 		if !e.Ctl.HasOnboardProfiles() {
-			fmt.Printf("%s: no onboard profiles, skipped\n", e.Name)
+			fmt.Printf("%s: not supported, skipped\n", e.Name)
 			return nil
 		}
 		if err := e.Ctl.ResetProfiles(); err != nil {

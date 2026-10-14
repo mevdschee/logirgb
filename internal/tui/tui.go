@@ -5,8 +5,6 @@ package tui
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -82,7 +80,6 @@ type model struct {
 	input   textinput.Model
 	status  string
 	isError bool
-	daemon  bool
 }
 
 var timeoutSteps = []int{0, 15, 30, 60, 120, 300, 600, 900, 1800, 3600}
@@ -115,7 +112,6 @@ func (m *model) load() error {
 	for i, e := range entries {
 		m.states[i] = m.initState(e)
 	}
-	m.daemon = daemonRunning()
 	if m.dev >= len(entries) {
 		m.dev = 0
 	}
@@ -152,9 +148,9 @@ func (m *model) initState(e *app.Entry) *devState {
 		if saved.SleepTimeout != nil {
 			s.sleep = *saved.SleepTimeout
 		}
-		s.dim = s.bmax / 8
-		if saved.DimBrightness != nil {
-			s.dim = *saved.DimBrightness
+		s.dim = app.DefaultDimPercent
+		if saved.DimPercent != nil {
+			s.dim = *saved.DimPercent
 		}
 	}
 	return s
@@ -191,7 +187,7 @@ func (m *model) rows() []row {
 	if e.Ctl.HasTimers() {
 		rows = append(rows,
 			row{kind: rowIdle, label: "Dim after"},
-			row{kind: rowDim, label: "Dim brightness"},
+			row{kind: rowDim, label: "Dim level"},
 			row{kind: rowSleep, label: "Off after"},
 		)
 	}
@@ -238,9 +234,15 @@ func (m *model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "w":
-		if e, _ := m.current(); e != nil && e.Usable() && e.Ctl.HasOnboardProfiles() {
-			n, err := app.SaveToProfiles(e, m.cfg.Device(e.Key))
-			m.setStatus(err, fmt.Sprintf("lighting stored in %d onboard profiles", n))
+		if e, s := m.current(); e != nil && e.Usable() && (e.Ctl.HasOnboardProfiles() || e.Ctl.HasProfileStorage()) {
+			m.setStatus(nil, "writing onboard memory...")
+			n, dir, err := app.SaveToProfiles(e, m.cfg.Device(e.Key))
+			if e.Ctl.HasProfileStorage() {
+				s.claimed = err != nil && s.claimed
+				m.setStatus(err, "stored in the keyboard; it now dims and turns off by itself (backup: "+dir+")")
+			} else {
+				m.setStatus(err, fmt.Sprintf("stored in %d onboard profiles (backup: %s)", n, dir))
+			}
 		}
 		return m, nil
 	case "a":
@@ -409,15 +411,14 @@ func (m *model) adjust(r row, dir int, big bool) {
 		case rowSleep:
 			s.sleep = stepThrough(timeoutSteps, s.sleep, dir)
 		case rowDim:
-			step := max((s.bmax-s.bmin)/20, 1)
-			s.dim = clamp(s.dim+dir*step, s.bmin, s.bmax)
+			s.dim = clamp(s.dim+dir*5, 0, 100)
 		}
 		d := m.cfg.Device(e.Key)
 		d.Name = e.Name
 		d.IdleTimeout = config.IntPtr(s.idle)
 		d.SleepTimeout = config.IntPtr(s.sleep)
-		d.DimBrightness = config.IntPtr(s.dim)
-		m.setStatus(app.ApplyTimers(e, d), "timeouts saved")
+		d.DimPercent = config.IntPtr(s.dim)
+		m.setStatus(app.ApplyTimers(e, d), "saved; press w to store in the keyboard")
 		m.save()
 	}
 }
@@ -509,7 +510,7 @@ func (m *model) View() string {
 			b.WriteString(selStyle.Render("✓ ") + m.status + "\n")
 		}
 	}
-	help := "tab switch pane · ↑↓ select · ←→ change (shift: faster) · enter edit color · a apply saved · w write to onboard profiles · o onboard profile · ctrl+r rescan · q quit"
+	help := "tab switch pane · ↑↓ select · ←→ change (shift: faster) · enter edit color · a apply saved · w store in device · o onboard lighting · ctrl+r rescan · q quit"
 	if m.editing {
 		help = "type #rrggbb, r,g,b or a color name · enter confirm · esc cancel"
 	}
@@ -560,8 +561,11 @@ func (m *model) viewSettings() string {
 		}
 		return b.String()
 	}
-	if !s.claimed {
-		b.WriteString(dimStyle.Render("lighting follows the onboard profile until you change something") + "\n")
+	switch {
+	case !s.claimed:
+		b.WriteString(dimStyle.Render("showing the onboard lighting") + "\n")
+	case e.Ctl.HasProfileStorage():
+		b.WriteString(errStyle.Render("live preview, not stored: ") + dimStyle.Render("press w to store it") + "\n")
 	}
 	b.WriteString("\n")
 
@@ -591,7 +595,7 @@ func (m *model) viewSettings() string {
 		case rowSleep:
 			val = seconds(s.sleep)
 		case rowDim:
-			val = fmt.Sprintf("%d  %s", s.dim, bar(s.dim-s.bmin, s.bmax-s.bmin))
+			val = fmt.Sprintf("%d%%  %s", s.dim, bar(s.dim, 100))
 		}
 		label := fmt.Sprintf("%-15s", r.label)
 		if r.kind == rowBrightness || r.kind == rowIdle {
@@ -606,13 +610,8 @@ func (m *model) viewSettings() string {
 	if e.Ctl.HasOnboardProfiles() {
 		b.WriteString("\n" + dimStyle.Render("changes last until a profile switch; press w to store them in all onboard profiles"))
 	}
-	if e.Ctl.HasTimers() {
-		b.WriteString("\n")
-		if m.daemon {
-			b.WriteString(dimStyle.Render("dim/off handled by the running logirgb daemon"))
-		} else {
-			b.WriteString(errStyle.Render("dim/off need the daemon: ") + dimStyle.Render("run `logirgb daemon` (see README for systemd)"))
-		}
+	if e.Ctl.HasProfileStorage() {
+		b.WriteString("\n" + dimStyle.Render("the keyboard only dims and turns off stored lighting; press w to store"))
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
@@ -634,24 +633,4 @@ func seconds(s int) string {
 		return strconv.Itoa(s/60) + " min"
 	}
 	return strconv.Itoa(s) + " s"
-}
-
-// daemonRunning looks for another logirgb process started with "daemon".
-func daemonRunning() bool {
-	procs, _ := filepath.Glob("/proc/[0-9]*/cmdline")
-	self := os.Getpid()
-	for _, p := range procs {
-		if pid, _ := strconv.Atoi(filepath.Base(filepath.Dir(p))); pid == self {
-			continue
-		}
-		data, err := os.ReadFile(p)
-		if err != nil {
-			continue
-		}
-		args := strings.Split(string(data), "\x00")
-		if len(args) > 1 && filepath.Base(args[0]) == "logirgb" && args[1] == "daemon" {
-			return true
-		}
-	}
-	return false
 }

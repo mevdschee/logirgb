@@ -68,3 +68,18 @@ func TestEffectJSON(t *testing.T) {
 		t.Errorf("round trip: %s -> %+v", data, out)
 	}
 }
+
+func TestDimmed(t *testing.T) {
+	typ := effectTypes[0x0A]
+	e := Effect{Name: "breathe", Values: map[Param]int{ParamColor: 0xFF8040, ParamPeriod: 3000, ParamIntensity: 80}}
+	d := e.dimmed(typ, 50)
+	if got := d.Values[ParamColor]; got != 0x7F4020 {
+		t.Errorf("color = %06x, want 7f4020", got)
+	}
+	if got := d.Values[ParamIntensity]; got != 40 {
+		t.Errorf("intensity = %d, want 40", got)
+	}
+	if got := d.Values[ParamPeriod]; got != 3000 {
+		t.Errorf("period = %d, want 3000", got)
+	}
+}

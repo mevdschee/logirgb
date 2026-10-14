@@ -1,5 +1,5 @@
 // Package app ties discovery, permissions and lighting control together for
-// the CLI, TUI and daemon front ends.
+// the CLI and TUI front ends.
 package app
 
 import (

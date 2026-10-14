@@ -1,5 +1,4 @@
-// Package config persists the desired lighting state per device model, so
-// the daemon can restore it after idle/sleep and on reconnect.
+// Package config persists the desired lighting state per device model.
 package config
 
 import (
@@ -9,8 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"sync"
-	"time"
 
 	"github.com/mevdschee/logitech-rgb/lighting"
 )
@@ -26,8 +23,9 @@ type Device struct {
 	// SleepTimeout in seconds of inactivity before the lighting turns off;
 	// 0 disables it.
 	SleepTimeout *int `json:"sleep_timeout,omitempty"`
-	// DimBrightness is the brightness used while idle, in device units.
-	DimBrightness *int `json:"dim_brightness,omitempty"`
+	// DimPercent is the brightness of the dimmed lighting relative to the
+	// normal lighting (keyboards with profile storage).
+	DimPercent *int `json:"dim_percent,omitempty"`
 }
 
 // Zone returns the stored effect for a zone.
@@ -118,33 +116,3 @@ func (c *Config) Save() error {
 
 // IntPtr is a small helper for the optional fields.
 func IntPtr(v int) *int { return &v }
-
-// Watcher returns the current config, re-reading the file when it changed.
-type Watcher struct {
-	mu      sync.Mutex
-	cfg     *Config
-	modTime time.Time
-}
-
-// Get returns the latest config. On read errors the previous one is kept.
-func (w *Watcher) Get() *Config {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	p, err := Path()
-	if err == nil {
-		st, err := os.Stat(p)
-		if err == nil && st.ModTime().Equal(w.modTime) && w.cfg != nil {
-			return w.cfg
-		}
-		if c, err := Load(); err == nil {
-			w.cfg = c
-			if st != nil {
-				w.modTime = st.ModTime()
-			}
-		}
-	}
-	if w.cfg == nil {
-		w.cfg = &Config{}
-	}
-	return w.cfg
-}

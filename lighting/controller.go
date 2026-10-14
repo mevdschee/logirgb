@@ -197,11 +197,10 @@ func (c *Controller) Claimed() (bool, error) {
 	return r[1] != 0, nil
 }
 
-// SetSWControl modes for 0x8071 function 5: [set, mode, flags]. Flag 0x04
-// makes the firmware report idleness, 0x02 makes it report activity.
+// SetSWControl payloads for 0x8071 function 5: [set, mode, flags]. Mode 3
+// gives the host the lighting; the firmware then stops dimming on idle.
 var (
 	swActive  = []byte{0x01, 0x03, 0x04}
-	swIdle    = []byte{0x01, 0x03, 0x02}
 	swRelease = []byte{0x01, 0x00, 0x00}
 )
 
@@ -290,10 +289,4 @@ func (c *Controller) SetTimers(idle, sleep int) error {
 	_, err := c.dev.Call(c.feature, 7, 0x01, 0x00, 0x00,
 		byte(idle>>8), byte(idle), byte(sleep>>8), byte(sleep))
 	return err
-}
-
-// SetActivityWatch keeps software control but asks the firmware to report
-// the next user activity instead of the next idle period.
-func (c *Controller) SetActivityWatch() error {
-	return c.setSWControl(swIdle)
 }
