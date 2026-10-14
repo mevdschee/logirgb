@@ -110,7 +110,7 @@ keyleds, OpenRGB, Solaar]:
 | Model | Index | Feature | g810-led bytes |
 |---|---|---|---|
 | G410/G512/G513/G610/G810/G Pro | `0x0c` | 0x8080 PerKeyLighting | `0c 3a` SetKeyColors (fn 3), `0c 5a` commit (fn 5) |
-| same | `0x0d` | 0x8070 ColorLEDEffects | `0d 3c` SetZoneEffect (fn 3), `0d 5a` fn 5 used for startup mode (OpenRGB names 0x8070 fn 5 a getter, so this one is uncertain) |
+| same | `0x0d` | 0x8070 ColorLEDEffects | `0d 3c` SetZoneEffect (fn 3), `0d 5a` fn 5 is setNvConfig(bootUpEffect, state) for startup mode: state 1 plays the stored effect at power-on, 2 keeps the last colours (confirmed by captures, see projects-keyboards.md) |
 | G213/G413 | `0x0c` | 0x8070 ColorLEDEffects | both `0c 3a` "region" and `0c 3c` FX are fn 3 SetZoneEffect, region writes use effect 1 (static) |
 | G815 | `0x0f` | 0x8071 RGBEffects | `0f 1c` SetRgbClusterEffect, `0f 5c 01 03 03` SetSWControl |
 | G815 | `0x10` | 0x8081 PerKeyLighting v2 | `10 1c` SetIndividualRgbZones, `10 6c` SetRgbZonesSingleValue, `10 7f` FrameEnd |

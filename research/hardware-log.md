@@ -289,3 +289,14 @@ and `8070 e 01 -> 01 01 00 ff 00` (zone 1 green), and the logo was green. So
 profile LED block 0 drives zone 1 (the logo) and block 1 drives zone 0.
 After fixing the mapping, the logo kept its configured color across profile
 switches.
+
+### 0x8070 persistence byte
+
+`8070 3 [zone, effectIndex, params10, persist]` with persist `01` (RAM and
+EEPROM): logo set to magenta while all onboard profiles stored blue. After
+unplugging and replugging, the logo came back magenta, so the stored zone
+effect is what the mouse shows at power-up. The first profile switch loaded
+the profile's LED block (blue). Writing the profiles and the persistent zone
+effect together kept the logo color through profile switches and a replug.
+The profile sectors were not changed by the persist write (block 0 still
+read `01 00 00 ff 02`).

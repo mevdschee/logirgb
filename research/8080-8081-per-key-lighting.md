@@ -269,7 +269,9 @@ Caveats:
 - G513/G512 (wired, older family): these use 0x8080 rather than 0x8081
   according to the OpenRGB unified driver's split between "0x8070 per-key
   keyboards (those exposing 0x8080: G810 family)" and 0x8081 devices
-  **[OpenRGB]**; we have not seen a feature dump for the G513 **[unverified]**.
+  **[OpenRGB]**. A G513 feature dump from Solaar issue #2653 (in
+  [devices.md](devices.md)) shows 0x8080 at index 0x0c and 0x8070 at 0x0d,
+  and G810 captures agree with that layout.
 
 ## 0x8080 PerKeyLighting (v1)
 
@@ -285,7 +287,7 @@ below comes from the OpenRGB unified controller and g810-led.
 | 1 | GET_KEY_TYPE_INFO | 0x11 | keyType u16 | keyCount u16 @0, 3 parameter bytes @2-4 |
 | 2 | GET_KEY_COLORS | 0x11 request, 0x12 reply | keyType u16, startIndex u16, persistence (0 = volatile) | 4 byte header, then 14 x (keyId, R, G, B); keyId 0 = padding |
 | 3 | SET_KEY_COLORS | **0x12** (64 byte very long report) | keyType u16, count u16, count x (keyId, R, G, B), up to 14 | ack |
-| 4 | SET_ALL_KEYS | | not used | |
+| 4 | SET_BLOCK_LEDS | 0x11 | block u16, R, G, B | ack; sets every key of a block to one color, commit with fn5. Used by keyleds and by LGS to clear blocks **[keyleds, LGS capture]**, see [projects-keyboards.md](projects-keyboards.md) |
 | 5 | FLUSH_LEDS | 0x11 | empty ("persist = default") | ack; colors appear only after this |
 
 keyType values (single bits, OR'ed in typeFlags) **[OpenRGB]**:
@@ -312,8 +314,11 @@ presence is detected from usages 0x53-0x63 **[OpenRGB]**.
 
 On Windows the 0x12 report lives on a separate top level collection (usage
 0x0604), so OpenRGB opens a second handle for it; ACKs come back on the
-normal handle **[OpenRGB]**. On Linux hidraw the 0x12 report is sent on the
-same node if its report descriptor declares report ID 0x12 **[unverified]**.
+normal handle **[OpenRGB]**. On Linux hidraw both reports share one node: the
+G815 report descriptor in a G HUB capture declares usage 0x0602 with report
+0x11 and usage 0x0604 with report 0x12 on the same interface, and the ack to
+a 0x12 frame comes back as a 0x11 report **[capture]**, see
+[projects-keyboards.md](projects-keyboards.md).
 The G515 HID++ node only declares reports 0x10 and 0x11 **[hw]**, so 0x8080
 style very long writes would not work there anyway.
 
