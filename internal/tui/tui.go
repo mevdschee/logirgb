@@ -103,6 +103,10 @@ type model struct {
 	devOff int
 	rowOff int
 
+	// showHelp replaces the panes with the help screen, scrolled to helpOff.
+	showHelp bool
+	helpOff  int
+
 	editing bool
 	input   textinput.Model
 	status  string
@@ -278,6 +282,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil
 	case tea.KeyMsg:
+		if m.showHelp {
+			return m.updateHelp(msg)
+		}
 		if m.editing {
 			return m.updateEditing(msg)
 		}
@@ -290,6 +297,9 @@ func (m *model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "ctrl+c", "esc":
 		return m, tea.Quit
+	case "?":
+		m.showHelp, m.helpOff = true, 0
+		return m, nil
 	case "tab", "shift+tab":
 		if m.focus == focusDevices && len(m.rows()) > 0 {
 			m.focus = focusSettings
@@ -380,6 +390,91 @@ func (m *model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+func (m *model) updateHelp(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "up", "k":
+		m.helpOff--
+	case "down", "j":
+		m.helpOff++
+	case "pgup":
+		m.helpOff -= 10
+	case "pgdown", " ":
+		m.helpOff += 10
+	default:
+		m.showHelp = false
+	}
+	m.helpOff = max(m.helpOff, 0)
+	return m, nil
+}
+
+// helpSections is the content of the help screen.
+var helpSections = []struct {
+	title string
+	keys  [][2]string
+}{
+	{"Moving around", [][2]string{
+		{"tab", "switch between the device list and the settings"},
+		{"↑ ↓  k j", "select a device or a setting"},
+		{"← →  h l", "change the selected setting"},
+		{"shift+← →  H L", "change it in bigger steps (also pgup, pgdown)"},
+		{"enter  e", "type a color: #rrggbb, r,g,b or a name like orange"},
+	}},
+	{"Device", [][2]string{
+		{"w", "write the settings to the device's onboard memory, after a backup"},
+		{"a", "apply the saved settings to the device again"},
+		{"o", "hand the lighting back to the onboard profile"},
+		{"ctrl+r  F5", "rescan the devices"},
+		{"?", "show this help; any key closes it"},
+		{"q  esc", "quit"},
+	}},
+	{"Good to know", [][2]string{
+		{"lighting", "shows right away, but a profile switch or power cycle undoes it until you press w"},
+		{"DPI, rate", "only change on the mouse when you press w"},
+		{"profiles", "start on the profile the mouse is running, marked active"},
+		{"config", "settings are saved in ~/.config/logirgb/config.json"},
+		{"backups", "w first saves the onboard memory in ~/.local/share/logirgb/backups"},
+	}},
+}
+
+// viewHelpScreen renders the help screen for a pane with the given inner
+// width and height.
+func (m *model) viewHelpScreen(width, height int) string {
+	keyWidth := 0
+	for _, sec := range helpSections {
+		for _, k := range sec.keys {
+			keyWidth = max(keyWidth, lipgloss.Width(k[0]))
+		}
+	}
+	var lines []string
+	for i, sec := range helpSections {
+		if i > 0 {
+			lines = append(lines, "")
+		}
+		lines = append(lines, titleStyle.Render(sec.title))
+		for _, k := range sec.keys {
+			// Wrap the description in its own column next to the key.
+			desc := lipgloss.NewStyle().Width(max(width-keyWidth-4, 10)).Render(k[1])
+			key := selStyle.Render(fmt.Sprintf("  %-*s  ", keyWidth, k[0]))
+			lines = append(lines, strings.Split(lipgloss.JoinHorizontal(lipgloss.Top, key, desc), "\n")...)
+		}
+	}
+	if height <= 0 || len(lines) <= height {
+		m.helpOff = 0
+		return strings.Join(lines, "\n")
+	}
+	m.helpOff = min(m.helpOff, len(lines)-height)
+	out := slices.Clone(lines[m.helpOff : m.helpOff+height])
+	if m.helpOff > 0 {
+		out[0] = dimStyle.Render("  ↑ more")
+	}
+	if m.helpOff+height < len(lines) {
+		out[height-1] = dimStyle.Render("  ↓ more")
+	}
+	return strings.Join(out, "\n")
 }
 
 func (m *model) updateEditing(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -704,11 +799,7 @@ func (m *model) View() string {
 			bottom.WriteString(lipgloss.NewStyle().Width(width).Render(selStyle.Render("✓ ")+m.status) + "\n")
 		}
 	}
-	help := "tab switch pane · ↑↓ select · ←→ change (shift: faster) · enter edit color · a apply saved · w store in device · o onboard lighting · ctrl+r rescan · q quit"
-	if m.editing {
-		help = "type #rrggbb, r,g,b or a color name · enter confirm · esc cancel"
-	}
-	bottom.WriteString(dimStyle.Width(width).Render(help))
+	bottom.WriteString(m.viewHelp(width))
 
 	lw, rw := m.paneWidths()
 	lp, rp := paneStyle, paneStyle
@@ -722,6 +813,15 @@ func (m *model) View() string {
 	if m.height > 0 {
 		h := m.height - lipgloss.Height(top.String()) - lipgloss.Height(bottom.String()) - 2
 		lp, rp = lp.Height(max(h, 0)), rp.Height(max(h, 0))
+	}
+	if m.showHelp {
+		hp := focusPane.Width(lw + rw - 2)
+		h := -1
+		if m.height > 0 {
+			h = m.height - lipgloss.Height(top.String()) - lipgloss.Height(bottom.String()) - 2
+			hp = hp.Height(max(h, 0))
+		}
+		return top.String() + "\n" + hp.Render(m.viewHelpScreen(lw+rw-4, h)) + "\n" + bottom.String()
 	}
 	left, devSel := m.viewDevices(lw - 4)
 	right, rowSel := m.viewSettings(rw - 4)
@@ -771,6 +871,51 @@ func linesIn(s string, width int) int {
 		return 0
 	}
 	return lipgloss.Height(lipgloss.NewStyle().Width(width).Render(s))
+}
+
+// helpItems are the key hints of the help line; when the line does not fit,
+// the items in dropOrder are left out, in that order.
+var (
+	helpItems = [][2]string{
+		{"tab", "pane"}, {"↑↓", "move"}, {"←→", "set"}, {"e", "color"}, {"w", "write"},
+		{"a", "apply"}, {"o", "onboard"}, {"^r", "scan"}, {"?", "help"}, {"q", "quit"},
+	}
+	editHelpItems = [][2]string{
+		{"#rrggbb", "r,g,b or name"}, {"enter", "confirm"}, {"esc", "cancel"},
+	}
+	dropOrder = []string{"tab", "o", "a", "^r"}
+)
+
+// viewHelp renders the key hints on a single line of at most width columns.
+func (m *model) viewHelp(width int) string {
+	items := helpItems
+	switch {
+	case m.editing:
+		items = editHelpItems
+	case m.showHelp:
+		items = [][2]string{{"↑↓", "scroll"}, {"any key", "close"}}
+	}
+	render := func(items [][2]string) (string, int) {
+		var parts, plain []string
+		for _, it := range items {
+			parts = append(parts, selStyle.Render(it[0])+" "+dimStyle.Render(it[1]))
+			plain = append(plain, it[0]+" "+it[1])
+		}
+		return strings.Join(parts, "  "), lipgloss.Width(strings.Join(plain, "  "))
+	}
+	line, w := render(items)
+	for i := 0; w > width && i < len(dropOrder); i++ {
+		items = slices.DeleteFunc(slices.Clone(items), func(it [2]string) bool { return it[0] == dropOrder[i] })
+		line, w = render(items)
+	}
+	if w > width {
+		var raw []string
+		for _, it := range items {
+			raw = append(raw, it[0]+" "+it[1])
+		}
+		return dimStyle.Render(truncate(strings.Join(raw, "  "), width))
+	}
+	return line
 }
 
 // truncate shortens s to at most n runes, ending in an ellipsis when cut.

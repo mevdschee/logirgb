@@ -55,6 +55,7 @@ immediately and saved.
 | w | store the lighting (and G515 timers) in the device |
 | o | show the onboard lighting again |
 | ctrl+r | rescan devices |
+| ? | help screen |
 | q | quit |
 
 The CLI does the same from scripts:
