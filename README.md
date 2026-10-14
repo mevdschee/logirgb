@@ -42,8 +42,10 @@ sudo udevadm control --reload-rules && sudo udevadm trigger --subsystem-match=hi
 ## Usage
 
 Run `logirgb` without arguments for the TUI: pick a device on the left, change
-effect, colors, brightness and timeouts on the right. Changes are applied
-immediately and saved.
+effect, colors, brightness and timeouts on the right. The settings are read
+from the device; lighting changes show right away and `w` writes them to the
+device's onboard memory. A `*` marks a device with changes that are not
+written yet, and quitting then asks first.
 
 | Key | Action |
 |---|---|
@@ -51,9 +53,8 @@ immediately and saved.
 | ↑ ↓ | select device or setting |
 | ← → | change value (shift or H/L for bigger steps); cycles colors |
 | enter | type a color (`#ff8000`, `255,128,0` or `orange`) |
-| a | re-apply the saved settings |
-| w | store the lighting (and G515 timers) in the device |
-| o | show the onboard lighting again |
+| w | write the settings to the device's onboard memory |
+| o | drop unwritten changes and show the stored lighting |
 | ctrl+r | rescan devices |
 | ? | help screen |
 | q | quit |
@@ -61,18 +62,16 @@ immediately and saved.
 The CLI does the same from scripts:
 
 ```bash
-logirgb list                                     # devices, zones, effects, current settings
-logirgb set static --color orange                # all zones of all devices
+logirgb list                                     # devices, zones, effects, stored settings
+logirgb set static --color orange                # all zones of all devices, stored
 logirgb set -d g515 breathe --color blue --period 3000
 logirgb set -d g502 -z 1 cycle --period 8000
 logirgb set -d g502 -p 2 -z 1 static --color green  # logo of onboard profile 2 only
 logirgb set -d g515 wave --direction left --period 4000
 logirgb brightness -d g515 50
 logirgb timeouts -d g515 --idle 60 --sleep 300 --dim 50
-logirgb apply                                    # re-apply saved settings
-logirgb release                                  # back to the onboard profile
-logirgb set -d g515 static --color orange --save # set and store in the keyboard
-logirgb save                                     # store lighting (and timers) in the devices
+logirgb set -d g515 static --color red --preview  # show it without storing it
+logirgb release                                  # drop a preview
 logirgb reset-profiles -d g502                   # back to the factory profiles
 ```
 
@@ -81,31 +80,30 @@ Effects are `off`, `static`, `pulse`, `breathe`, `cycle`, `wave`, `ripple` and
 parameters they take (`--color`, `--color2`, `--period`, `--speed`,
 `--intensity`, `--saturation`, `--direction`, `--form`).
 
-Settings are stored per device model in `~/.config/logirgb/config.json`.
-
 ### Storing settings in the device
 
-Changes made with `set`, `brightness` or the TUI are a live preview: they go
-to the device's RAM and are lost on a power cycle. `logirgb save` (or `w` in
-the TUI, or `set --save`) stores them in the device's onboard memory. The
-previous contents are backed up to `~/.local/share/logirgb/backups/` first,
-and every write is verified by reading it back. The TUI starts from what
-the onboard memory holds (the G515 profile's lighting, dim level and
-timeouts, and the lighting of each G502 profile), so `w` writes back what
-you see.
+There is no config file: the device is the source of truth. logirgb reads
+what the onboard memory holds (the G515 profile's lighting, dim level and
+timeouts, and the lighting, DPI levels and report rate of each G502
+profile) and writes changes back to it. `set` and `timeouts` store their
+change right away, unless `--preview` is given; in the TUI changes show on
+the device right away and `w` stores them. The previous contents are backed
+up to `~/.local/share/logirgb/backups/` first, and every write is verified
+by reading it back. Devices without onboard memory only get a live change
+that lasts until the next power cycle.
 
 **G515 TKL.** The keyboard's onboard profile holds the lighting, a dimmed
-copy of it and the idle and sleep timeouts. After `save` the firmware runs
+copy of it and the idle and sleep timeouts. Once stored, the firmware runs
 that profile by itself: it dims to the configured level (`--dim`, percent of
 the normal lighting) after the idle timeout, switches off after the sleep
 timeout and wakes up on the next key press, also after a power cycle. While
 you are previewing changes the host controls the lighting and the firmware
-does not dim; `save` hands control back, and `o` in the TUI (or
+does not dim; storing hands control back, and `o` in the TUI (or
 `logirgb release`) drops a preview without storing it.
 
 **G502 HERO.** The mouse re-applies the lighting of its onboard profile
 whenever you switch profiles (the button behind the scroll wheel) or replug
-it, so `save` writes the lighting into all onboard profiles. Each profile can
+it, so logirgb writes the lighting into all onboard profiles. Each profile can
 have its own lighting: pick it with the Profile row in the TUI (it starts on
 the active profile, which is marked) or with `set -p <n>`. Without `-p`,
 `set` changes every profile and replaces the per profile lighting of that
@@ -118,12 +116,13 @@ from the mouse (100-25600 DPI in steps of 50 and 125-1000 Hz on the G502
 HERO). These are not previewed: `w` writes them, and the mouse stays on its
 current DPI level.
 
-
 - A mouse that still runs its factory (ROM) profiles gets them copied to the
   user profile sectors with only the LED blocks changed. DPI, buttons and
   report rate stay at the factory values.
 - Existing user profiles (for example from G HUB or Piper) keep everything
-  except their LED blocks. Profiles with a bad checksum are not touched.
+  except their LED blocks, DPI levels and report rate, which are written as
+  read unless you changed them. Profiles with a bad checksum are not
+  touched.
 - The profile directory is written last.
 - The active profile's zone effects are also stored with the 0x8070
   persistence flag, which is what the mouse shows at power-up, before any

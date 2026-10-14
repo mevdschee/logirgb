@@ -13,7 +13,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/mevdschee/logirgb/hidpp"
-	"github.com/mevdschee/logirgb/internal/config"
+	"github.com/mevdschee/logirgb/internal/state"
 	"github.com/mevdschee/logirgb/internal/udev"
 	"github.com/mevdschee/logirgb/lighting"
 )
@@ -43,7 +43,7 @@ func Scan(softwareID byte) ([]*Entry, error) {
 	}
 	var out []*Entry
 	for _, info := range infos {
-		e := &Entry{Info: info, Name: info.Name, Key: config.Key(info.VendorID, info.ProductID)}
+		e := &Entry{Info: info, Name: info.Name, Key: state.Key(info.VendorID, info.ProductID)}
 		out = append(out, e)
 		if unix.Access(info.Path, unix.R_OK|unix.W_OK) != nil {
 			e.Err = ErrPermission

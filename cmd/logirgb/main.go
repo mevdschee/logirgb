@@ -11,7 +11,7 @@ import (
 
 	"github.com/mevdschee/logirgb/hidpp"
 	"github.com/mevdschee/logirgb/internal/app"
-	"github.com/mevdschee/logirgb/internal/config"
+	"github.com/mevdschee/logirgb/internal/state"
 	"github.com/mevdschee/logirgb/internal/tui"
 	"github.com/mevdschee/logirgb/internal/udev"
 	"github.com/mevdschee/logirgb/lighting"
@@ -22,17 +22,20 @@ const usage = `logirgb - control the RGB lighting of Logitech devices
 Usage:
   logirgb                       open the interactive TUI
   logirgb list                  list devices, zones, effects and settings
-  logirgb set [flags] <effect>  set a lighting effect
+  logirgb set [flags] <effect>  set a lighting effect and store it on the device
   logirgb brightness [-d dev] <value>
   logirgb timeouts [-d dev] [--idle s] [--sleep s] [--dim percent]
-  logirgb apply                 re-apply the saved settings to all devices
-  logirgb release [-d dev]      hand lighting back to the onboard profile
-  logirgb save [-d dev]         store lighting (and G515 timers) in onboard memory
+  logirgb release [-d dev]      drop a preview and show the stored lighting
   logirgb reset-profiles [-d dev]  go back to the factory onboard profiles
   logirgb udev-rule             print the udev rule granting device access
 
 Devices (-d) are selected by list number, hidraw path or name fragment
 such as "g515". Without -d every usable device is changed.
+
+Settings are read from the devices and written to their onboard memory
+(after a backup in ~/.local/share/logirgb/backups); set and timeouts take
+--preview to only show a change until the next profile switch or power
+cycle.
 
 Run "logirgb <command> -h" for the flags of a command.
 `
@@ -58,12 +61,8 @@ func main() {
 		err = cmdBrightness(args)
 	case "timeouts":
 		err = cmdTimeouts(args)
-	case "apply":
-		err = cmdApply(args)
 	case "release":
 		err = cmdRelease(args)
-	case "save":
-		err = cmdSave(args)
 	case "reset-profiles":
 		err = cmdResetProfiles(args)
 	case "udev-rule":
@@ -103,10 +102,6 @@ func cmdList(args []string) error {
 		return err
 	}
 	defer app.Close(entries)
-	cfg, err := config.Load()
-	if err != nil {
-		return err
-	}
 
 	for i, e := range entries {
 		fmt.Printf("%d. %s  [%s, %s]\n", i+1, e.Name, e.Info.Path, e.Key)
@@ -115,14 +110,17 @@ func cmdList(args []string) error {
 			continue
 		}
 		ctl := e.Ctl
-		saved := cfg.Device(e.Key)
+		saved, err := app.Load(e)
+		if err != nil {
+			fmt.Printf("   reading the onboard memory failed: %v\n", err)
+		}
 		for zi, z := range ctl.Zones() {
 			fmt.Printf("   zone %d (%s)", zi, z.Location)
 			if z.Description != "" {
 				fmt.Printf(": %s", z.Description)
 			}
 			if eff, ok := saved.Zone(zi); ok {
-				fmt.Printf("  current: %s", describe(z, eff))
+				fmt.Printf("  stored: %s", describe(z, eff))
 			}
 			fmt.Println()
 			for _, p := range saved.ProfileNumbers() {
@@ -191,7 +189,7 @@ func cmdSet(args []string) error {
 	saturation := fs.Int("saturation", -1, "saturation 0-255")
 	direction := fs.String("direction", "", "wave direction: right, left, up, down, center-out, center-in, ...")
 	form := fs.String("form", "", "breathe waveform: sine, square, triangle, sawtooth, shark-fin, exponential")
-	store := fs.Bool("save", false, "also store the lighting in onboard memory")
+	preview := fs.Bool("preview", false, "only show the lighting, do not store it in onboard memory")
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: logirgb set [flags] <off|static|pulse|breathe|cycle|wave|ripple|starlight>")
 		fs.PrintDefaults()
@@ -247,10 +245,6 @@ func cmdSet(args []string) error {
 	if err != nil {
 		return err
 	}
-	cfg, err := config.Load()
-	if err != nil {
-		return err
-	}
 	for _, e := range targets {
 		zones := []int{*zone}
 		if *zone < 0 {
@@ -265,8 +259,10 @@ func cmdSet(args []string) error {
 		if *profile > 0 && !e.Ctl.HasOnboardProfiles() {
 			return fmt.Errorf("%s: no per profile lighting", e.Name)
 		}
-		d := cfg.Device(e.Key)
-		d.Name = e.Name
+		d, err := app.Load(e)
+		if err != nil {
+			return fmt.Errorf("%s: read onboard memory: %w", e.Name, err)
+		}
 		for _, z := range zones {
 			if err := e.Ctl.SetEffect(z, eff); err != nil {
 				return fmt.Errorf("%s: %w", e.Name, err)
@@ -282,13 +278,11 @@ func cmdSet(args []string) error {
 			}
 			fmt.Printf("%s %s: %s\n", e.Name, where, describe(e.Ctl.Zones()[z], eff))
 		}
-		if *store && (e.Ctl.HasOnboardProfiles() || e.Ctl.HasProfileStorage()) {
-			if err := save(e, d); err != nil {
-				return fmt.Errorf("%s: %w", e.Name, err)
-			}
+		if err := store(e, d, *preview); err != nil {
+			return fmt.Errorf("%s: %w", e.Name, err)
 		}
 	}
-	return cfg.Save()
+	return nil
 }
 
 func cmdBrightness(args []string) error {
@@ -302,7 +296,7 @@ func cmdBrightness(args []string) error {
 	if err != nil {
 		return fmt.Errorf("invalid brightness %q", pos[0])
 	}
-	return eachDevice(*dev, func(e *app.Entry, d *config.Device) error {
+	return eachDevice(*dev, func(e *app.Entry) error {
 		if !e.Ctl.HasBrightness() {
 			fmt.Printf("%s: no brightness control, skipped\n", e.Name)
 			return nil
@@ -317,7 +311,6 @@ func cmdBrightness(args []string) error {
 		if err := e.Ctl.SetBrightness(v); err != nil {
 			return err
 		}
-		d.Brightness = config.IntPtr(v)
 		fmt.Printf("%s: brightness %d\n", e.Name, v)
 		return nil
 	})
@@ -329,45 +322,34 @@ func cmdTimeouts(args []string) error {
 	idle := fs.Int("idle", -1, "seconds of inactivity before dimming, 0 disables")
 	sleep := fs.Int("sleep", -1, "seconds of inactivity before the lighting turns off, 0 disables")
 	dim := fs.Int("dim", -1, "brightness while dimmed, in percent of the normal lighting")
+	preview := fs.Bool("preview", false, "only set the running timers, do not store them in onboard memory")
 	fs.Parse(args)
-	return eachDevice(*dev, func(e *app.Entry, d *config.Device) error {
+	return eachDevice(*dev, func(e *app.Entry) error {
 		if !e.Ctl.HasTimers() {
 			fmt.Printf("%s: no idle timers, skipped\n", e.Name)
 			return nil
 		}
+		d, err := app.Load(e)
+		if err != nil {
+			return fmt.Errorf("read onboard memory: %w", err)
+		}
 		if *idle >= 0 {
-			d.IdleTimeout = config.IntPtr(*idle)
+			d.IdleTimeout = state.IntPtr(*idle)
 		}
 		if *sleep >= 0 {
-			d.SleepTimeout = config.IntPtr(*sleep)
+			d.SleepTimeout = state.IntPtr(*sleep)
 		}
 		if *dim >= 0 {
 			if *dim > 100 {
 				return fmt.Errorf("dim must be 0-100")
 			}
-			d.DimPercent = config.IntPtr(*dim)
+			d.DimPercent = state.IntPtr(*dim)
 		}
 		if err := app.ApplyTimers(e, d); err != nil {
 			return err
 		}
 		fmt.Printf("%s: dim to %s after %s, off after %s\n", e.Name, dimPercent(d), optSeconds(d.IdleTimeout), optSeconds(d.SleepTimeout))
-		if e.Ctl.HasProfileStorage() {
-			fmt.Printf("%s: run \"logirgb save\" to store this in the keyboard\n", e.Name)
-		}
-		return nil
-	})
-}
-
-func cmdApply(args []string) error {
-	fs := flag.NewFlagSet("apply", flag.ExitOnError)
-	dev := fs.String("d", "", "device")
-	fs.Parse(args)
-	return eachDevice(*dev, func(e *app.Entry, d *config.Device) error {
-		if err := app.Apply(e, d); err != nil {
-			return err
-		}
-		fmt.Printf("%s: applied\n", e.Name)
-		return nil
+		return store(e, d, *preview)
 	})
 }
 
@@ -375,7 +357,7 @@ func cmdRelease(args []string) error {
 	fs := flag.NewFlagSet("release", flag.ExitOnError)
 	dev := fs.String("d", "", "device")
 	fs.Parse(args)
-	return eachDevice(*dev, func(e *app.Entry, d *config.Device) error {
+	return eachDevice(*dev, func(e *app.Entry) error {
 		if err := e.Ctl.Release(); err != nil {
 			return err
 		}
@@ -384,20 +366,17 @@ func cmdRelease(args []string) error {
 	})
 }
 
-func cmdSave(args []string) error {
-	fs := flag.NewFlagSet("save", flag.ExitOnError)
-	dev := fs.String("d", "", "device")
-	fs.Parse(args)
-	return eachDevice(*dev, func(e *app.Entry, d *config.Device) error {
-		if !e.Ctl.HasOnboardProfiles() && !e.Ctl.HasProfileStorage() {
-			fmt.Printf("%s: no onboard memory, skipped\n", e.Name)
-			return nil
-		}
-		return save(e, d)
-	})
-}
-
-func save(e *app.Entry, d *config.Device) error {
+// store writes the settings to the device's onboard memory, unless only a
+// preview was asked for or the device has no onboard memory.
+func store(e *app.Entry, d *state.Device, preview bool) error {
+	if preview {
+		fmt.Printf("%s: preview only, not stored\n", e.Name)
+		return nil
+	}
+	if !e.Ctl.HasOnboardProfiles() && !e.Ctl.HasProfileStorage() {
+		fmt.Printf("%s: no onboard memory, the change lasts until the next power cycle\n", e.Name)
+		return nil
+	}
 	n, dir, err := app.SaveToProfiles(e, d)
 	if dir != "" {
 		fmt.Printf("%s: previous onboard memory backed up to %s\n", e.Name, dir)
@@ -406,14 +385,14 @@ func save(e *app.Entry, d *config.Device) error {
 		return err
 	}
 	if e.Ctl.HasProfileStorage() {
-		fmt.Printf("%s: lighting and timers stored; the keyboard now dims and turns off by itself\n", e.Name)
+		fmt.Printf("%s: stored; the keyboard now dims and turns off by itself\n", e.Name)
 	} else {
-		fmt.Printf("%s: lighting stored in %d onboard profiles\n", e.Name, n)
+		fmt.Printf("%s: stored in %d onboard profiles\n", e.Name, n)
 	}
 	return nil
 }
 
-func dimPercent(d *config.Device) string {
+func dimPercent(d *state.Device) string {
 	v := app.DefaultDimPercent
 	if d.DimPercent != nil {
 		v = *d.DimPercent
@@ -425,7 +404,7 @@ func cmdResetProfiles(args []string) error {
 	fs := flag.NewFlagSet("reset-profiles", flag.ExitOnError)
 	dev := fs.String("d", "", "device")
 	fs.Parse(args)
-	return eachDevice(*dev, func(e *app.Entry, d *config.Device) error {
+	return eachDevice(*dev, func(e *app.Entry) error {
 		if !e.Ctl.HasOnboardProfiles() {
 			fmt.Printf("%s: not supported, skipped\n", e.Name)
 			return nil
@@ -438,8 +417,8 @@ func cmdResetProfiles(args []string) error {
 	})
 }
 
-// eachDevice runs fn for the selected devices and saves the config.
-func eachDevice(sel string, fn func(*app.Entry, *config.Device) error) error {
+// eachDevice runs fn for the selected devices.
+func eachDevice(sel string, fn func(*app.Entry) error) error {
 	entries, err := scan()
 	if err != nil {
 		return err
@@ -449,18 +428,12 @@ func eachDevice(sel string, fn func(*app.Entry, *config.Device) error) error {
 	if err != nil {
 		return err
 	}
-	cfg, err := config.Load()
-	if err != nil {
-		return err
-	}
 	for _, e := range targets {
-		d := cfg.Device(e.Key)
-		d.Name = e.Name
-		if err := fn(e, d); err != nil {
+		if err := fn(e); err != nil {
 			return fmt.Errorf("%s: %w", e.Name, err)
 		}
 	}
-	return cfg.Save()
+	return nil
 }
 
 // parseArgs parses flags that may appear before or after positional

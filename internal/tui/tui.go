@@ -4,6 +4,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -15,7 +16,7 @@ import (
 
 	"github.com/mevdschee/logirgb/hidpp"
 	"github.com/mevdschee/logirgb/internal/app"
-	"github.com/mevdschee/logirgb/internal/config"
+	"github.com/mevdschee/logirgb/internal/state"
 	"github.com/mevdschee/logirgb/lighting"
 )
 
@@ -86,12 +87,15 @@ type devState struct {
 	sleep      int
 	dim        int
 	claimed    bool
+	// dev holds the settings as read from the device plus the edits;
+	// dirty is set while edits have not been written to onboard memory.
+	dev   *state.Device
+	dirty bool
 }
 
 type model struct {
 	entries []*app.Entry
 	states  []*devState
-	cfg     *config.Config
 
 	focus  focus
 	dev    int
@@ -106,6 +110,9 @@ type model struct {
 	// showHelp replaces the panes with the help screen, scrolled to helpOff.
 	showHelp bool
 	helpOff  int
+
+	// confirmQuit asks before quitting with unwritten changes.
+	confirmQuit bool
 
 	editing bool
 	input   textinput.Model
@@ -134,11 +141,7 @@ func (m *model) load() error {
 	if err != nil {
 		return err
 	}
-	cfg, err := config.Load()
-	if err != nil {
-		return err
-	}
-	m.entries, m.cfg = entries, cfg
+	m.entries = entries
 	m.states = make([]*devState, len(entries))
 	for i, e := range entries {
 		m.states[i] = m.initState(e)
@@ -155,7 +158,11 @@ func (m *model) initState(e *app.Entry) *devState {
 	if !e.Usable() {
 		return s
 	}
-	saved := m.cfg.Device(e.Key)
+	saved, err := app.Load(e)
+	if err != nil {
+		m.setStatus(fmt.Errorf("%s: read onboard memory: %w", e.Name, err))
+	}
+	s.dev = saved
 	s.claimed, _ = e.Ctl.Claimed()
 	if e.Ctl.HasOnboardProfiles() {
 		s.profiles, _ = e.Ctl.ProfileCount()
@@ -169,9 +176,6 @@ func (m *model) initState(e *app.Entry) *devState {
 		s.dpiRange = e.Ctl.DPIRange()
 		s.rates = e.Ctl.ReportRates()
 		slices.Sort(s.rates)
-	}
-	if err := app.LoadProfiles(e, saved); err != nil {
-		m.setStatus(fmt.Errorf("%s: read onboard memory: %w", e.Name, err))
 	}
 	for p := 0; p <= s.profiles; p++ {
 		var effects []lighting.Effect
@@ -192,7 +196,6 @@ func (m *model) initState(e *app.Entry) *devState {
 		s.brightness, _ = e.Ctl.Brightness()
 	}
 	if e.Ctl.HasTimers() {
-		s.idle, s.sleep, _ = e.Ctl.Timers()
 		if saved.IdleTimeout != nil {
 			s.idle = *saved.IdleTimeout
 		}
@@ -214,7 +217,7 @@ func (m *model) settings() *lighting.ProfileSettings {
 	if s.profile == 0 || !e.Ctl.HasProfileSettings() {
 		return nil
 	}
-	return m.cfg.Device(e.Key).Settings(s.profile)
+	return s.dev.Settings(s.profile)
 }
 
 // effect returns the effect being edited: the selected zone in the selected
@@ -282,6 +285,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil
 	case tea.KeyMsg:
+		if m.confirmQuit {
+			return m.updateConfirmQuit(msg)
+		}
 		if m.showHelp {
 			return m.updateHelp(msg)
 		}
@@ -295,7 +301,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "q", "ctrl+c", "esc":
+	case "ctrl+c":
+		return m, tea.Quit
+	case "q", "esc":
+		if len(m.unwritten()) > 0 {
+			m.confirmQuit = true
+			return m, nil
+		}
 		return m, tea.Quit
 	case "?":
 		m.showHelp, m.helpOff = true, 0
@@ -316,28 +328,24 @@ func (m *model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "o":
 		if e, s := m.current(); e != nil && e.Usable() {
-			err := e.Ctl.Release()
-			s.claimed = err != nil
-			m.setStatus(err, "lighting returned to the onboard profile")
+			if err := e.Ctl.Release(); err != nil {
+				m.setStatus(err)
+				return m, nil
+			}
+			// Drop the edits and show what the device stores again.
+			ns := m.initState(e)
+			ns.profile = s.profile
+			m.states[m.dev] = ns
+			m.setStatus(nil, "back to the stored lighting; unwritten changes dropped")
 		}
 		return m, nil
 	case "w":
-		if e, s := m.current(); e != nil && e.Usable() && (e.Ctl.HasOnboardProfiles() || e.Ctl.HasProfileStorage()) {
-			m.setStatus(nil, "writing onboard memory...")
-			n, dir, err := app.SaveToProfiles(e, m.cfg.Device(e.Key))
-			if e.Ctl.HasProfileStorage() {
-				s.claimed = err != nil && s.claimed
-				m.setStatus(err, "stored in the keyboard; it now dims and turns off by itself (backup: "+dir+")")
-			} else {
-				m.setStatus(err, fmt.Sprintf("stored in %d onboard profiles (backup: %s)", n, dir))
+		if e, _ := m.current(); e != nil && e.Usable() {
+			if !writable(e) {
+				m.setStatus(errors.New("this device has no onboard memory; changes are live only"))
+				return m, nil
 			}
-		}
-		return m, nil
-	case "a":
-		if e, s := m.current(); e != nil && e.Usable() {
-			err := app.Apply(e, m.cfg.Device(e.Key))
-			s.claimed = err == nil
-			m.setStatus(err, "applied saved settings")
+			m.write(m.dev)
 		}
 		return m, nil
 	}
@@ -392,6 +400,57 @@ func (m *model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// writable reports whether the device has onboard memory to write to.
+func writable(e *app.Entry) bool {
+	return e.Ctl.HasOnboardProfiles() || e.Ctl.HasProfileStorage()
+}
+
+// unwritten returns the indexes of the devices with unwritten changes.
+func (m *model) unwritten() []int {
+	var out []int
+	for i, s := range m.states {
+		if s.dirty {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+// write stores the settings of device i in its onboard memory.
+func (m *model) write(i int) error {
+	e, s := m.entries[i], m.states[i]
+	n, dir, err := app.SaveToProfiles(e, s.dev)
+	if err != nil {
+		m.setStatus(fmt.Errorf("%s: %w", e.Name, err))
+		return err
+	}
+	s.dirty = false
+	if e.Ctl.HasProfileStorage() {
+		s.claimed = false
+		m.setStatus(nil, "stored in the keyboard; it now dims and turns off by itself (backup: "+dir+")")
+	} else {
+		m.setStatus(nil, fmt.Sprintf("stored in %d onboard profiles (backup: %s)", n, dir))
+	}
+	return nil
+}
+
+func (m *model) updateConfirmQuit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c", "q", "y":
+		return m, tea.Quit
+	case "w":
+		for _, i := range m.unwritten() {
+			if m.write(i) != nil {
+				m.confirmQuit = false
+				return m, nil
+			}
+		}
+		return m, tea.Quit
+	}
+	m.confirmQuit = false
+	return m, nil
+}
+
 func (m *model) updateHelp(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
@@ -425,17 +484,17 @@ var helpSections = []struct {
 	}},
 	{"Device", [][2]string{
 		{"w", "write the settings to the device's onboard memory, after a backup"},
-		{"a", "apply the saved settings to the device again"},
-		{"o", "hand the lighting back to the onboard profile"},
+		{"o", "drop unwritten changes and show the stored lighting again"},
 		{"ctrl+r  F5", "rescan the devices"},
 		{"?", "show this help; any key closes it"},
-		{"q  esc", "quit"},
+		{"q  esc", "quit; asks first when changes are not written"},
 	}},
 	{"Good to know", [][2]string{
 		{"lighting", "shows right away, but a profile switch or power cycle undoes it until you press w"},
 		{"DPI, rate", "only change on the mouse when you press w"},
 		{"profiles", "start on the profile the mouse is running, marked active"},
-		{"config", "settings are saved in ~/.config/logirgb/config.json"},
+		{"settings", "are read from the device; edits are kept until you write them with w"},
+		{"*", "marks a device with changes that are not written yet"},
 		{"backups", "w first saves the onboard memory in ~/.local/share/logirgb/backups"},
 	}},
 }
@@ -594,11 +653,8 @@ func (m *model) adjust(r row, dir int, big bool) {
 			step *= 4
 		}
 		s.brightness = clamp(s.brightness+dir*step, s.bmin, s.bmax)
-		d := m.cfg.Device(e.Key)
-		d.Name = e.Name
-		d.Brightness = config.IntPtr(s.brightness)
+		s.dev.Brightness = state.IntPtr(s.brightness)
 		m.setStatus(e.Ctl.SetBrightness(s.brightness), fmt.Sprintf("brightness %d", s.brightness))
-		m.save()
 	case rowIdle, rowSleep, rowDim:
 		switch r.kind {
 		case rowIdle:
@@ -608,20 +664,19 @@ func (m *model) adjust(r row, dir int, big bool) {
 		case rowDim:
 			s.dim = clamp(s.dim+dir*5, 0, 100)
 		}
-		d := m.cfg.Device(e.Key)
-		d.Name = e.Name
-		d.IdleTimeout = config.IntPtr(s.idle)
-		d.SleepTimeout = config.IntPtr(s.sleep)
-		d.DimPercent = config.IntPtr(s.dim)
-		m.setStatus(app.ApplyTimers(e, d), "saved; press w to store in the keyboard")
-		m.save()
+		d := s.dev
+		d.IdleTimeout = state.IntPtr(s.idle)
+		d.SleepTimeout = state.IntPtr(s.sleep)
+		d.DimPercent = state.IntPtr(s.dim)
+		m.changed()
+		m.setStatus(app.ApplyTimers(e, d), "press w to store it in the keyboard")
 	}
 }
 
 // adjustSettings changes the report rate or a DPI setting of the selected
 // profile. These are not previewed; w writes them to the device.
 func (m *model) adjustSettings(r row, dir int, big bool) {
-	e, s := m.current()
+	_, s := m.current()
 	ps := m.settings()
 	switch r.kind {
 	case rowRate:
@@ -661,8 +716,7 @@ func (m *model) adjustSettings(r row, dir int, big bool) {
 			}
 		}
 	}
-	m.cfg.Device(e.Key).Name = e.Name
-	m.save()
+	m.changed()
 	m.setStatus(nil, fmt.Sprintf("profile %d %s changed; press w to store it in the mouse", s.profile, strings.ToLower(r.label)))
 }
 
@@ -698,14 +752,12 @@ func (m *model) applyEffect() {
 	}
 	if err == nil {
 		s.claimed = true
-		d := m.cfg.Device(e.Key)
-		d.Name = e.Name
 		if s.profile == 0 {
-			d.SetZone(s.zone, eff)
+			s.dev.SetZone(s.zone, eff)
 		} else {
-			d.SetProfileZone(s.profile, s.zone, eff)
+			s.dev.SetProfileZone(s.profile, s.zone, eff)
 		}
-		m.save()
+		m.changed()
 	}
 	where := e.Ctl.Zones()[s.zone].Location
 	if s.profile > 0 {
@@ -714,8 +766,7 @@ func (m *model) applyEffect() {
 	m.setStatus(err, fmt.Sprintf("%s: %s", where, eff.Name))
 }
 
-// previewProfile shows the lighting of the selected profile on the device,
-// without changing the config.
+// previewProfile shows the lighting of the selected profile on the device.
 func (m *model) previewProfile() {
 	e, s := m.current()
 	if err := e.Ctl.Claim(); err != nil {
@@ -732,9 +783,11 @@ func (m *model) previewProfile() {
 	m.setStatus(nil, fmt.Sprintf("editing profile %d", s.profile))
 }
 
-func (m *model) save() {
-	if err := m.cfg.Save(); err != nil {
-		m.setStatus(err)
+// changed marks the selected device as having unwritten changes, when it
+// has onboard memory to write them to.
+func (m *model) changed() {
+	if e, s := m.current(); writable(e) {
+		s.dirty = true
 	}
 }
 
@@ -792,7 +845,13 @@ func (m *model) View() string {
 	}
 
 	var bottom strings.Builder
-	if m.status != "" {
+	if m.confirmQuit {
+		var names []string
+		for _, i := range m.unwritten() {
+			names = append(names, m.entries[i].Name)
+		}
+		bottom.WriteString(errStyle.Width(width).Render("not written to "+strings.Join(names, ", ")+"; quit anyway?") + "\n")
+	} else if m.status != "" {
 		if m.isError {
 			bottom.WriteString(errStyle.Width(width).Render("✗ "+m.status) + "\n")
 		} else {
@@ -878,12 +937,12 @@ func linesIn(s string, width int) int {
 var (
 	helpItems = [][2]string{
 		{"tab", "pane"}, {"↑↓", "move"}, {"←→", "set"}, {"e", "color"}, {"w", "write"},
-		{"a", "apply"}, {"o", "onboard"}, {"^r", "scan"}, {"?", "help"}, {"q", "quit"},
+		{"o", "undo"}, {"^r", "scan"}, {"?", "help"}, {"q", "quit"},
 	}
 	editHelpItems = [][2]string{
 		{"#rrggbb", "r,g,b or name"}, {"enter", "confirm"}, {"esc", "cancel"},
 	}
-	dropOrder = []string{"tab", "o", "a", "^r"}
+	dropOrder = []string{"tab", "o", "^r"}
 )
 
 // viewHelp renders the key hints on a single line of at most width columns.
@@ -892,6 +951,8 @@ func (m *model) viewHelp(width int) string {
 	switch {
 	case m.editing:
 		items = editHelpItems
+	case m.confirmQuit:
+		items = [][2]string{{"w", "write and quit"}, {"q", "quit without writing"}, {"esc", "cancel"}}
 	case m.showHelp:
 		items = [][2]string{{"↑↓", "scroll"}, {"any key", "close"}}
 	}
@@ -945,8 +1006,12 @@ func (m *model) viewDevices(width int) (string, int) {
 		if !e.Usable() {
 			mark, style = "✗", errStyle
 		}
-		name := truncate(e.Name, width-4)
-		line := fmt.Sprintf("%s %s", style.Render(mark), name)
+		var line string
+		if m.states[i].dirty {
+			line = fmt.Sprintf("%s %s %s", style.Render(mark), truncate(e.Name, width-6), errStyle.Render("*"))
+		} else {
+			line = fmt.Sprintf("%s %s", style.Render(mark), truncate(e.Name, width-4))
+		}
 		if i == m.dev {
 			// Keep the path line below the name in view too.
 			sel = linesIn(b.String(), width) + 1

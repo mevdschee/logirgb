@@ -232,6 +232,25 @@ func (c *Controller) setSWControl(mode []byte) error {
 	return err
 }
 
+// Effect returns the current effect of a zone, read with 0x8070
+// getZoneEffect. ok is false when the device cannot report it.
+func (c *Controller) Effect(zone int) (e Effect, ok bool) {
+	if c.feature != hidpp.FeatureColorLEDEffects || zone < 0 || zone >= len(c.zones) {
+		return Effect{}, false
+	}
+	r, err := c.dev.Call(c.feature, 0xE, c.zones[zone].Index)
+	if err != nil {
+		return Effect{}, false
+	}
+	// Reply: zone, effect index, ten parameter bytes.
+	for _, ze := range c.zones[zone].Effects {
+		if ze.Index == r[1] {
+			return decode(ze.Type, r[2:12]), true
+		}
+	}
+	return Effect{}, false
+}
+
 // SetEffect applies an effect to a zone.
 func (c *Controller) SetEffect(zone int, e Effect) error {
 	return c.setEffect(zone, e, false)

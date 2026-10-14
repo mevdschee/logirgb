@@ -7,34 +7,38 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mevdschee/logirgb/internal/config"
+	"github.com/mevdschee/logirgb/internal/state"
 	"github.com/mevdschee/logirgb/lighting"
 )
 
-// Apply pushes the stored settings of a device to the hardware.
-func Apply(e *Entry, d *config.Device) error {
-	if err := e.Ctl.Claim(); err != nil {
-		return fmt.Errorf("claim lighting: %w", err)
-	}
-	if d.Brightness != nil && e.Ctl.HasBrightness() {
-		if err := e.Ctl.SetBrightness(*d.Brightness); err != nil {
-			return fmt.Errorf("brightness: %w", err)
+// Load reads the settings of a device: what its onboard memory stores and,
+// for devices without onboard memory, the current zone effects where the
+// device reports them.
+func Load(e *Entry) (*state.Device, error) {
+	d := &state.Device{Name: e.Name}
+	if e.Ctl.HasBrightness() {
+		if v, err := e.Ctl.Brightness(); err == nil {
+			d.Brightness = state.IntPtr(v)
 		}
 	}
-	for i := range e.Ctl.Zones() {
-		eff, ok := d.Zone(i)
-		if !ok {
-			continue
-		}
-		if err := e.Ctl.SetEffect(i, eff); err != nil {
-			return fmt.Errorf("zone %d: %w", i, err)
+	if e.Ctl.HasTimers() {
+		if idle, sleep, err := e.Ctl.Timers(); err == nil {
+			d.IdleTimeout, d.SleepTimeout = state.IntPtr(idle), state.IntPtr(sleep)
 		}
 	}
-	return ApplyTimers(e, d)
+	if !e.Ctl.HasOnboardProfiles() && !e.Ctl.HasProfileStorage() {
+		for i := range e.Ctl.Zones() {
+			if eff, ok := e.Ctl.Effect(i); ok {
+				d.SetZone(i, eff)
+			}
+		}
+		return d, nil
+	}
+	return d, loadOnboard(e, d)
 }
 
 // ApplyTimers writes the idle (dim) and sleep (off) timeouts to firmware.
-func ApplyTimers(e *Entry, d *config.Device) error {
+func ApplyTimers(e *Entry, d *state.Device) error {
 	if !e.Ctl.HasTimers() || (d.IdleTimeout == nil && d.SleepTimeout == nil) {
 		return nil
 	}
@@ -62,7 +66,7 @@ const DefaultDimPercent = 50
 // it also stores the idle/sleep timeouts and hands the lighting back to the
 // firmware, which then dims and switches off by itself. It returns the
 // number of profiles written and the backup directory.
-func SaveToProfiles(e *Entry, d *config.Device) (int, string, error) {
+func SaveToProfiles(e *Entry, d *state.Device) (int, string, error) {
 	effects := profileEffects(e, d, 0)
 	if len(effects) == 0 && len(d.Profiles) == 0 {
 		return 0, "", fmt.Errorf("no effects configured yet, set one first")
@@ -123,14 +127,14 @@ func SaveToProfiles(e *Entry, d *config.Device) (int, string, error) {
 	return 1, dir, e.Ctl.SetTimers(idle, sleep)
 }
 
-// LoadProfiles takes the lighting stored in the device's onboard memory
-// into d, so it shows and is written back as stored. On a keyboard with
+// loadOnboard takes the settings stored in the device's onboard memory
+// into d, so they show and are written back as stored. On a keyboard with
 // profile storage that is the effect, dim level and timeouts. On a mouse
 // with onboard profiles a profile gets its own effect for a zone where it
 // differs from the effect for all profiles, a zone without an effect for all
 // profiles takes the active profile's, and each profile's report rate and
-// DPI levels are taken too. d is only changed in memory.
-func LoadProfiles(e *Entry, d *config.Device) error {
+// DPI levels are taken too.
+func loadOnboard(e *Entry, d *state.Device) error {
 	if e.Ctl.HasProfileStorage() {
 		sp, ok, err := e.Ctl.ReadProfile()
 		if err != nil || !ok {
@@ -138,10 +142,10 @@ func LoadProfiles(e *Entry, d *config.Device) error {
 		}
 		d.SetZone(0, sp.Effect)
 		if sp.DimPercent > 0 {
-			d.DimPercent = config.IntPtr(sp.DimPercent)
+			d.DimPercent = state.IntPtr(sp.DimPercent)
 		}
-		d.IdleTimeout = config.IntPtr(sp.Idle)
-		d.SleepTimeout = config.IntPtr(sp.Sleep)
+		d.IdleTimeout = state.IntPtr(sp.Idle)
+		d.SleepTimeout = state.IntPtr(sp.Sleep)
 		return nil
 	}
 	if !e.Ctl.HasOnboardProfiles() {
@@ -181,7 +185,7 @@ func LoadProfiles(e *Entry, d *config.Device) error {
 
 // profileEffects returns the configured zone effects of an onboard profile
 // (1-based), or of all profiles for profile 0.
-func profileEffects(e *Entry, d *config.Device, profile int) map[int]lighting.Effect {
+func profileEffects(e *Entry, d *state.Device, profile int) map[int]lighting.Effect {
 	effects := map[int]lighting.Effect{}
 	for i := range e.Ctl.Zones() {
 		if eff, ok := d.ProfileZone(profile, i); ok {
