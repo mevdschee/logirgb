@@ -748,7 +748,7 @@ func (m *model) setStatus(err error, ok ...string) {
 
 // Styles.
 var (
-	accent     = lipgloss.AdaptiveColor{Light: "#0b7a75", Dark: "#4fd1c5"}
+	accent     = lipgloss.AdaptiveColor{Light: "#0057d9", Dark: "#3d8bfd"}
 	dim        = lipgloss.AdaptiveColor{Light: "#7a7a7a", Dark: "#8a8a8a"}
 	errColor   = lipgloss.AdaptiveColor{Light: "#c0362c", Dark: "#ff6b6b"}
 	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(accent)
