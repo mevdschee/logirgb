@@ -175,8 +175,7 @@ This is not official Logitech software. It is not affiliated with,
 endorsed by or supported by Logitech. Logitech, Logitech G, G HUB, LIGHTSYNC
 and HERO are trademarks or registered trademarks of Logitech Europe S.A.
 and/or its affiliates, and product names are used only to identify the
-devices this tool works with. The protocol was learned from public
-documentation and other open source projects, not from Logitech.
+devices this tool works with.
 
 `logirgb` writes to the memory of your devices. Use it at your own risk:
 it comes without any warranty, and the authors are not liable for damaged
