@@ -67,8 +67,8 @@ The CLI does the same from scripts:
 logirgb list                                     # devices, zones, effects, stored settings
 logirgb set static --color orange                # all zones of all devices, stored
 logirgb set -d g515 breathe --color blue --period 3000
-logirgb set -d g502 -z 1 cycle --period 8000
-logirgb set -d g502 -p 2 -z 1 static --color green  # logo of onboard profile 2 only
+logirgb set -d g502 -z 1 cycle --period 8000       # logo of the active profile
+logirgb set -d g502 -p 2 -z 1 static --color green  # logo of onboard profile 2
 logirgb set -d g515 wave --direction left --period 4000
 logirgb brightness -d g515 50
 logirgb timeouts -d g515 --idle 60 --sleep 300 --dim 50
@@ -105,11 +105,11 @@ does not dim; storing hands control back, and `o` in the TUI (or
 
 **G502 HERO.** The mouse re-applies the lighting of its onboard profile
 whenever you switch profiles (the button behind the scroll wheel) or replug
-it, so logirgb writes the lighting into all onboard profiles. Each profile can
-have its own lighting: pick it with the Profile row in the TUI (it starts on
-the active profile, which is marked) or with `set -p <n>`. Without `-p`,
-`set` changes every profile and replaces the per profile lighting of that
-zone. The TUI lists all zones of the device under each other.
+it. logirgb writes the lighting into one profile at a time, so you choose
+which profile you want to change: pick it with the Profile row in the TUI (it
+starts on the active profile, which is marked) or with `set -p <n>`. Without
+`-p`, `set` changes the active profile. The TUI lists all zones of the device
+under each other.
 
 The TUI also shows the selected profile's report rate, its DPI levels
 (up to five, `off` for unused ones), the level the profile starts on and the
@@ -130,7 +130,8 @@ the last enabled one cannot be disabled.
   except their LED blocks, DPI levels and report rate, which are written as
   read unless you changed them. Profiles with a bad checksum are not
   touched.
-- The profile directory is written last.
+- Only the profiles that changed are written, and the profile directory is
+  written last.
 - The active profile's zone effects are also stored with the 0x8070
   persistence flag, which is what the mouse shows at power-up, before any
   profile switch.

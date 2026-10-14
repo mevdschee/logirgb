@@ -183,7 +183,7 @@ func cmdSet(args []string) error {
 	fs := flag.NewFlagSet("set", flag.ExitOnError)
 	dev := fs.String("d", "", "device")
 	zone := fs.Int("z", -1, "zone number (default: all zones)")
-	profile := fs.Int("p", 0, "onboard profile number, for devices that store lighting per profile (default: all profiles)")
+	profile := fs.Int("p", 0, "onboard profile number, for devices that store lighting per profile (default: the active profile)")
 	color := fs.String("color", "", "color: #rrggbb, r,g,b or a name like red")
 	color2 := fs.String("color2", "", "second color (starlight)")
 	period := fs.Int("period", -1, "effect period in ms")
@@ -266,16 +266,20 @@ func cmdSet(args []string) error {
 		if err != nil {
 			return fmt.Errorf("%s: read onboard memory: %w", e.Name, err)
 		}
+		p := *profile
+		if p == 0 && e.Ctl.HasOnboardProfiles() {
+			if p, err = e.Ctl.ActiveProfile(); err != nil {
+				return fmt.Errorf("%s: active profile: %w", e.Name, err)
+			}
+		}
 		for _, z := range zones {
 			if err := e.Ctl.SetEffect(z, eff); err != nil {
 				return fmt.Errorf("%s: %w", e.Name, err)
 			}
 			where := fmt.Sprintf("zone %d", z)
-			if *profile > 0 {
-				d.SetProfileZone(*profile, z, eff)
-				where = fmt.Sprintf("profile %d %s", *profile, where)
-			} else if e.Ctl.HasOnboardProfiles() {
-				d.SetAllProfilesZone(z, eff)
+			if p > 0 {
+				d.SetProfileZone(p, z, eff)
+				where = fmt.Sprintf("profile %d %s", p, where)
 			} else {
 				d.SetZone(z, eff)
 			}
@@ -387,7 +391,7 @@ func store(e *app.Entry, d *state.Device, preview bool) error {
 	if e.Ctl.HasProfileStorage() {
 		fmt.Printf("%s: stored; the keyboard now dims and turns off by itself\n", e.Name)
 	} else {
-		fmt.Printf("%s: stored in %d onboard profiles\n", e.Name, n)
+		fmt.Printf("%s: stored (profiles rewritten: %d)\n", e.Name, n)
 	}
 	return nil
 }

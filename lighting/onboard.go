@@ -237,9 +237,9 @@ func (c *Controller) userDirectory(info profileInfo) ([][2]int, error) {
 // SaveToProfiles writes zone effects, settings and enabled flags into the
 // onboard profiles, so they survive profile switches and power cycles.
 // profiles[i] is profile i+1. On a device that still runs its factory
-// profiles, these are first copied to the user sectors. The active profile
-// and the last enabled one cannot be disabled. It returns the number of
-// profiles written.
+// profiles, these are first copied to the user sectors; otherwise only the
+// profiles that change are written. The active profile and the last enabled
+// one cannot be disabled. It returns the number of profiles written.
 func (c *Controller) SaveToProfiles(profiles []Profile) (int, error) {
 	if !c.HasOnboardProfiles() {
 		return 0, errors.New("device has no onboard profiles")
@@ -321,6 +321,7 @@ func (c *Controller) SaveToProfiles(profiles []Profile) (int, error) {
 	// so remember the current DPI level and restore it afterwards.
 	dpi, dpiErr := c.dev.Call(hidpp.FeatureOnboardProfiles, 0xB)
 
+	written := 0
 	for i, entry := range entries {
 		sector := entry[0]
 		if sector >= romSectorBase {
@@ -332,10 +333,10 @@ func (c *Controller) SaveToProfiles(profiles []Profile) (int, error) {
 		}
 		data, err := c.readSector(src, info.sectorSize)
 		if err != nil {
-			return i, err
+			return written, err
 		}
 		if !fromROM && !validSector(data) {
-			return i, fmt.Errorf("profile %d (sector %#04x) has a bad checksum, not touching it", i+1, sector)
+			return written, fmt.Errorf("profile %d (sector %#04x) has a bad checksum, not touching it", i+1, sector)
 		}
 		if i < len(leds) {
 			for zone, led := range leds[i] {
@@ -345,10 +346,15 @@ func (c *Controller) SaveToProfiles(profiles []Profile) (int, error) {
 				encodeSettings(data, *settings[i])
 			}
 		}
+		stored := bytes.Clone(data)
 		sealSector(data)
-		if err := c.writeSector(sector, data); err != nil {
-			return i, err
+		if !fromROM && bytes.Equal(data, stored) {
+			continue
 		}
+		if err := c.writeSector(sector, data); err != nil {
+			return written, err
+		}
+		written++
 	}
 
 	switch {
@@ -364,21 +370,21 @@ func (c *Controller) SaveToProfiles(profiles []Profile) (int, error) {
 		copy(dir[o:], []byte{0xFF, 0xFF, 0x00, 0x00})
 		sealSector(dir)
 		if err := c.writeSector(0, dir); err != nil {
-			return len(entries), err
+			return written, err
 		}
 	case flagsChanged:
 		// Change only the enabled flags; the profile button skips the
 		// profiles with flag 0.
 		dir, err := c.readSector(0, info.sectorSize)
 		if err != nil {
-			return len(entries), err
+			return written, err
 		}
 		for i, e := range entries {
 			dir[i*dirEntrySize+2] = byte(e[1])
 		}
 		sealSector(dir)
 		if err := c.writeSector(0, dir); err != nil {
-			return len(entries), err
+			return written, err
 		}
 	}
 
@@ -399,7 +405,7 @@ func (c *Controller) SaveToProfiles(profiles []Profile) (int, error) {
 			}
 		}
 	}
-	return len(entries), nil
+	return written, nil
 }
 
 // ledSlot maps a zone to its LED block in a profile. The profile stores the

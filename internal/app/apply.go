@@ -122,11 +122,9 @@ func SaveToProfiles(e *Entry, d *state.Device) (int, error) {
 // loadOnboard takes the settings stored in the device's onboard memory
 // into d, so they show and are written back as stored. On a keyboard with
 // profile storage that is the effect, dim level and timeouts. On a mouse
-// with onboard profiles a profile gets its own effect for a zone where it
-// differs from the effect for all profiles, a zone without an effect for all
-// profiles takes the active profile's, a zone whose effect cannot be read
-// keeps it, and each profile's report rate, DPI levels and enabled flag are
-// taken too.
+// with onboard profiles it is each profile's zone effects, report rate, DPI
+// levels and enabled flag; a zone whose effect cannot be read is left out,
+// so the profile keeps it.
 func loadOnboard(e *Entry, d *state.Device) error {
 	if e.Ctl.HasProfileStorage() {
 		sp, ok, err := e.Ctl.ReadProfile()
@@ -148,29 +146,9 @@ func loadOnboard(e *Entry, d *state.Device) error {
 	if err != nil {
 		return err
 	}
-	active, err := e.Ctl.ActiveProfile()
-	if err != nil || active < 1 || active > len(profiles) {
-		active = 1
-	}
-	for i, z := range e.Ctl.Zones() {
-		all, ok := d.Zone(i)
-		if !ok {
-			if all, ok = profiles[active-1].Effects[i]; ok {
-				d.SetZone(i, all)
-			}
-		}
-		for p, prof := range profiles {
-			eff, stored := prof.Effects[i]
-			switch {
-			case !stored:
-				// An effect that could not be read stays as stored,
-				// rather than taking the effect for all profiles.
-				d.KeepProfileZone(p+1, i)
-			case ok && z.Same(eff, all):
-				d.ClearProfileZone(p+1, i)
-			default:
-				d.SetProfileZone(p+1, i, eff)
-			}
+	for p, prof := range profiles {
+		for i, eff := range prof.Effects {
+			d.SetProfileZone(p+1, i, eff)
 		}
 	}
 	for p, prof := range profiles {

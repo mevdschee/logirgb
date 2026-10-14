@@ -433,7 +433,7 @@ func (m *model) write(i int) error {
 		s.claimed = false
 		m.setStatus(nil, "stored in the keyboard; it now dims and turns off by itself")
 	} else {
-		m.setStatus(nil, fmt.Sprintf("stored in %d onboard profiles", n))
+		m.setStatus(nil, fmt.Sprintf("stored (profiles rewritten: %d)", n))
 	}
 	return nil
 }

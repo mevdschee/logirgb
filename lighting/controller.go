@@ -33,15 +33,6 @@ func (z Zone) Find(name string) (ZoneEffect, bool) {
 	return ZoneEffect{}, false
 }
 
-// Same reports whether two effects drive the zone identically.
-func (z Zone) Same(a, b Effect) bool {
-	za, ok := z.Find(a.Name)
-	if !ok || a.Name != b.Name {
-		return false
-	}
-	return a.encode(za.Type) == b.encode(za.Type)
-}
-
 var zoneLocations = map[uint16]string{
 	0x00: "unknown",
 	0x01: "primary",
