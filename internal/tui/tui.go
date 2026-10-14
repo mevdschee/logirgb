@@ -5,6 +5,7 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -43,6 +44,10 @@ const (
 	rowZone
 	rowEffect
 	rowParam
+	rowRate
+	rowDPI
+	rowStartDPI
+	rowShiftDPI
 	rowBrightness
 	rowIdle
 	rowSleep
@@ -53,6 +58,7 @@ type row struct {
 	kind  rowKind
 	label string
 	param lighting.ParamSpec
+	level int // DPI level for rowDPI
 }
 
 // devState is what the TUI shows for one device.
@@ -63,7 +69,10 @@ type devState struct {
 	active   int
 	zone     int
 	// effects holds the zone effects per profile, index 0 for all.
-	effects    [][]lighting.Effect
+	effects [][]lighting.Effect
+	// dpiRange and rates limit the profile settings (report rate, DPI).
+	dpiRange   lighting.DPIRange
+	rates      []int
 	brightness int
 	bmin, bmax int
 	idle       int
@@ -137,6 +146,11 @@ func (m *model) initState(e *app.Entry) *devState {
 		s.profiles, _ = e.Ctl.ProfileCount()
 		s.active, _ = e.Ctl.ActiveProfile()
 	}
+	if e.Ctl.HasProfileSettings() {
+		s.dpiRange = e.Ctl.DPIRange()
+		s.rates = e.Ctl.ReportRates()
+		slices.Sort(s.rates)
+	}
 	if err := app.LoadProfiles(e, saved); err != nil {
 		m.setStatus(fmt.Errorf("%s: read onboard memory: %w", e.Name, err))
 	}
@@ -174,6 +188,16 @@ func (m *model) initState(e *app.Entry) *devState {
 	return s
 }
 
+// settings returns the report rate and DPI settings of the selected
+// profile, or nil when there are none to edit.
+func (m *model) settings() *lighting.ProfileSettings {
+	e, s := m.current()
+	if s.profile == 0 || !e.Ctl.HasProfileSettings() {
+		return nil
+	}
+	return m.cfg.Device(e.Key).Settings(s.profile)
+}
+
 // effect returns the effect being edited: the selected zone in the selected
 // profile.
 func (s *devState) effect() *lighting.Effect {
@@ -207,6 +231,16 @@ func (m *model) rows() []row {
 		for _, p := range ze.Type.Params() {
 			rows = append(rows, row{kind: rowParam, label: p.Label, param: p})
 		}
+	}
+	if ps := m.settings(); ps != nil {
+		rows = append(rows, row{kind: rowRate, label: "Report rate"})
+		for i := range ps.DPI {
+			rows = append(rows, row{kind: rowDPI, label: fmt.Sprintf("DPI %d", i+1), level: i})
+		}
+		rows = append(rows,
+			row{kind: rowStartDPI, label: "DPI at start"},
+			row{kind: rowShiftDPI, label: "DPI shift"},
+		)
 	}
 	if e.Ctl.HasBrightness() {
 		rows = append(rows, row{kind: rowBrightness, label: "Brightness"})
@@ -424,6 +458,8 @@ func (m *model) adjust(r row, dir int, big bool) {
 		}
 		eff.Set(r.param.Name, v)
 		m.applyEffect()
+	case rowRate, rowDPI, rowStartDPI, rowShiftDPI:
+		m.adjustSettings(r, dir, big)
 	case rowBrightness:
 		step := max((s.bmax-s.bmin)/20, 1)
 		if big {
@@ -452,6 +488,62 @@ func (m *model) adjust(r row, dir int, big bool) {
 		m.setStatus(app.ApplyTimers(e, d), "saved; press w to store in the keyboard")
 		m.save()
 	}
+}
+
+// adjustSettings changes the report rate or a DPI setting of the selected
+// profile. These are not previewed; w writes them to the device.
+func (m *model) adjustSettings(r row, dir int, big bool) {
+	e, s := m.current()
+	ps := m.settings()
+	switch r.kind {
+	case rowRate:
+		i := max(slices.Index(s.rates, ps.ReportRate), 0)
+		ps.ReportRate = s.rates[clamp(i+dir, 0, len(s.rates)-1)]
+	case rowDPI:
+		rng := s.dpiRange
+		v := ps.DPI[r.level]
+		step := rng.Step
+		if big {
+			step *= 10
+		}
+		switch {
+		case v == 0 && dir > 0:
+			v = rng.Min
+		case v == 0:
+		case v+dir*step < rng.Min:
+			// Turn the level off, unless the profile needs it.
+			if r.level != ps.DefaultDPI && r.level != ps.ShiftDPI && ps.Levels() > 1 {
+				v = 0
+			} else {
+				v = rng.Min
+			}
+		default:
+			v = clamp(v+dir*step, rng.Min, rng.Max)
+		}
+		ps.DPI[r.level] = v
+	case rowStartDPI, rowShiftDPI:
+		idx := &ps.DefaultDPI
+		if r.kind == rowShiftDPI {
+			idx = &ps.ShiftDPI
+		}
+		for i := *idx + dir; i >= 0 && i < len(ps.DPI); i += dir {
+			if ps.DPI[i] > 0 {
+				*idx = i
+				break
+			}
+		}
+	}
+	m.cfg.Device(e.Key).Name = e.Name
+	m.save()
+	m.setStatus(nil, fmt.Sprintf("profile %d %s changed; press w to store it in the mouse", s.profile, strings.ToLower(r.label)))
+}
+
+// levelDPI formats the DPI level i of the profile settings.
+func levelDPI(ps *lighting.ProfileSettings, i int) string {
+	if i < 0 || i >= len(ps.DPI) {
+		return "?"
+	}
+	return fmt.Sprintf("level %d (%d DPI)", i+1, ps.DPI[i])
 }
 
 func cyclePalette(cur, dir int) int {
@@ -663,6 +755,17 @@ func (m *model) viewSettings() string {
 				}
 				val += "  " + lipgloss.NewStyle().Background(lipgloss.Color(lighting.FormatColor(v))).Render("      ")
 			}
+		case rowRate:
+			val = fmt.Sprintf("%d Hz", m.settings().ReportRate)
+		case rowDPI:
+			val = "off"
+			if v := m.settings().DPI[r.level]; v > 0 {
+				val = strconv.Itoa(v)
+			}
+		case rowStartDPI:
+			val = levelDPI(m.settings(), m.settings().DefaultDPI)
+		case rowShiftDPI:
+			val = levelDPI(m.settings(), m.settings().ShiftDPI)
 		case rowBrightness:
 			val = fmt.Sprintf("%d  %s", s.brightness, bar(s.brightness-s.bmin, s.bmax-s.bmin))
 		case rowIdle:
@@ -673,7 +776,7 @@ func (m *model) viewSettings() string {
 			val = fmt.Sprintf("%d%%  %s", s.dim, bar(s.dim, 100))
 		}
 		label := fmt.Sprintf("%-15s", r.label)
-		if r.kind == rowBrightness || r.kind == rowIdle {
+		if r.kind == rowBrightness || r.kind == rowIdle || r.kind == rowRate {
 			b.WriteString("\n")
 		}
 		if i == m.row && m.focus == focusSettings {
@@ -683,7 +786,7 @@ func (m *model) viewSettings() string {
 		}
 	}
 	if e.Ctl.HasOnboardProfiles() {
-		b.WriteString("\n" + dimStyle.Render("changes last until a profile switch; press w to store them in the onboard profiles"))
+		b.WriteString("\n" + dimStyle.Render("changes last until a profile switch; press w to store them in the onboard profiles; report rate and DPI change only with w"))
 	}
 	if e.Ctl.HasProfileStorage() {
 		b.WriteString("\n" + dimStyle.Render("the keyboard only dims and turns off stored lighting; press w to store"))

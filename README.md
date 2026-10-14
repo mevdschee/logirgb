@@ -110,6 +110,13 @@ profile number; the active one is marked) or with `set -p <n>`. Changes made
 under `all` apply to every profile and replace the per profile lighting of
 that zone.
 
+With a profile selected the TUI also shows its report rate, its DPI levels
+(up to five, `off` for unused ones), the level the profile starts on and the
+level the DPI shift button switches to. The DPI range and report rates come
+from the mouse (100-25600 DPI in steps of 50 and 125-1000 Hz on the G502
+HERO). These are not previewed: `w` writes them, and the mouse stays on its
+current DPI level.
+
 
 - A mouse that still runs its factory (ROM) profiles gets them copied to the
   user profile sectors with only the LED blocks changed. DPI, buttons and

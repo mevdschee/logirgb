@@ -155,10 +155,20 @@ func (c *Controller) ActiveProfile() (int, error) {
 	return sector, nil
 }
 
-// ReadProfiles returns the zone effects stored in each onboard profile;
-// element i holds profile i+1. Zones whose LED block holds an effect the
-// zone does not support are left out.
-func (c *Controller) ReadProfiles() ([]map[int]Effect, error) {
+// Profile is the content of an onboard profile that this package edits.
+type Profile struct {
+	// Effects holds the zone effects. Zones without an effect keep their
+	// stored LED block when writing, and are left out when reading a block
+	// with an effect the zone does not support.
+	Effects map[int]Effect
+	// Settings holds the report rate and DPI levels; nil keeps the stored
+	// ones when writing.
+	Settings *ProfileSettings
+}
+
+// ReadProfiles returns what each onboard profile holds; element i is
+// profile i+1.
+func (c *Controller) ReadProfiles() ([]Profile, error) {
 	if !c.HasOnboardProfiles() {
 		return nil, errors.New("device has no onboard profiles")
 	}
@@ -175,13 +185,14 @@ func (c *Controller) ReadProfiles() ([]map[int]Effect, error) {
 			entries = append(entries, [2]int{romSectorBase + i, 1})
 		}
 	}
-	var out []map[int]Effect
+	var out []Profile
 	for _, entry := range entries {
 		data, err := c.readSector(entry[0], info.sectorSize)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, c.decodeLEDs(data))
+		s := decodeSettings(data)
+		out = append(out, Profile{Effects: c.decodeLEDs(data), Settings: &s})
 	}
 	return out, nil
 }
@@ -219,12 +230,12 @@ func (c *Controller) userDirectory(info profileInfo) ([][2]int, error) {
 	return entries, nil
 }
 
-// SaveToProfiles writes zone effects into the onboard profiles, so they
-// survive profile switches and power cycles. effects[i] holds the zone
-// effects for profile i+1; zones without an effect keep their stored LED
-// block. On a device that still runs its factory profiles, these are first
-// copied to the user sectors. It returns the number of profiles written.
-func (c *Controller) SaveToProfiles(effects []map[int]Effect) (int, error) {
+// SaveToProfiles writes zone effects and settings into the onboard
+// profiles, so they survive profile switches and power cycles. profiles[i]
+// is profile i+1. On a device that still runs its factory profiles, these
+// are first copied to the user sectors. It returns the number of profiles
+// written.
+func (c *Controller) SaveToProfiles(profiles []Profile) (int, error) {
 	if !c.HasOnboardProfiles() {
 		return 0, errors.New("device has no onboard profiles")
 	}
@@ -237,10 +248,18 @@ func (c *Controller) SaveToProfiles(effects []map[int]Effect) (int, error) {
 	}
 
 	// Build the LED blocks first so invalid input fails before any write.
-	leds := make([]map[int][]byte, len(effects))
-	for p, zones := range effects {
+	leds := make([]map[int][]byte, len(profiles))
+	settings := make([]*ProfileSettings, len(profiles))
+	for p, prof := range profiles {
+		if prof.Settings != nil {
+			s := prof.Settings.compact()
+			if err := c.validate(s); err != nil {
+				return 0, fmt.Errorf("profile %d: %w", p+1, err)
+			}
+			settings[p] = &s
+		}
 		leds[p] = map[int][]byte{}
-		for zone, e := range zones {
+		for zone, e := range prof.Effects {
 			if zone < 0 || zone >= len(c.zones) {
 				return 0, fmt.Errorf("no zone %d", zone)
 			}
@@ -289,6 +308,9 @@ func (c *Controller) SaveToProfiles(effects []map[int]Effect) (int, error) {
 			for zone, led := range leds[i] {
 				copy(data[ledOffset+c.ledSlot(zone)*ledSize:], led)
 			}
+			if settings[i] != nil {
+				encodeSettings(data, *settings[i])
+			}
 		}
 		sealSector(data)
 		if err := c.writeSector(sector, data); err != nil {
@@ -319,7 +341,13 @@ func (c *Controller) SaveToProfiles(effects []map[int]Effect) (int, error) {
 		if idx := int(current[1]); idx >= 1 && idx <= len(entries) {
 			c.dev.Call(hidpp.FeatureOnboardProfiles, 3, 0x00, byte(idx))
 			if dpiErr == nil {
-				c.dev.Call(hidpp.FeatureOnboardProfiles, 0xC, dpi[0])
+				// Stay on the same level, or the last one if the profile
+				// now has fewer levels.
+				level := dpi[0]
+				if idx <= len(settings) && settings[idx-1] != nil {
+					level = byte(min(int(level), settings[idx-1].Levels()-1))
+				}
+				c.dev.Call(hidpp.FeatureOnboardProfiles, 0xC, level)
 			}
 		}
 	}

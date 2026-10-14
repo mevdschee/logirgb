@@ -20,6 +20,9 @@ type Device struct {
 	// Profiles overrides the zone effects per onboard profile (1-based),
 	// for devices that store lighting in each profile (G502).
 	Profiles map[string]map[string]lighting.Effect `json:"profiles,omitempty"`
+	// ProfileSettings holds the report rate and DPI levels per onboard
+	// profile (1-based); profiles without an entry keep what they store.
+	ProfileSettings map[string]*lighting.ProfileSettings `json:"profile_settings,omitempty"`
 	// Brightness in device units (G515: 0-100); nil leaves it alone.
 	Brightness *int `json:"brightness,omitempty"`
 	// IdleTimeout in seconds before the lighting dims; 0 disables dimming.
@@ -88,6 +91,22 @@ func (d *Device) SetAllProfilesZone(i int, e lighting.Effect) {
 			delete(d.Profiles, p)
 		}
 	}
+}
+
+// Settings returns the report rate and DPI settings of an onboard profile,
+// or nil.
+func (d *Device) Settings(profile int) *lighting.ProfileSettings {
+	return d.ProfileSettings[strconv.Itoa(profile)]
+}
+
+// SetSettings stores the report rate and DPI settings of an onboard
+// profile.
+func (d *Device) SetSettings(profile int, s lighting.ProfileSettings) {
+	if d.ProfileSettings == nil {
+		d.ProfileSettings = map[string]*lighting.ProfileSettings{}
+	}
+	s.DPI = slices.Clone(s.DPI)
+	d.ProfileSettings[strconv.Itoa(profile)] = &s
 }
 
 // ProfileNumbers returns the onboard profiles with their own effects, in

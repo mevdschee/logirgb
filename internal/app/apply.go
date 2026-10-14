@@ -76,9 +76,9 @@ func SaveToProfiles(e *Entry, d *config.Device) (int, string, error) {
 		if err != nil {
 			return 0, dir, err
 		}
-		profiles := make([]map[int]lighting.Effect, count)
+		profiles := make([]lighting.Profile, count)
 		for p := range profiles {
-			profiles[p] = profileEffects(e, d, p+1)
+			profiles[p] = lighting.Profile{Effects: profileEffects(e, d, p+1), Settings: d.Settings(p + 1)}
 		}
 		n, err := e.Ctl.SaveToProfiles(profiles)
 		if err != nil {
@@ -89,7 +89,7 @@ func SaveToProfiles(e *Entry, d *config.Device) (int, string, error) {
 		// Use the active profile's lighting, which the mouse runs again
 		// after power-up.
 		if active, err := e.Ctl.ActiveProfile(); err == nil && active >= 1 && active <= count {
-			effects = profiles[active-1]
+			effects = profiles[active-1].Effects
 		}
 		for zone, eff := range effects {
 			if err := e.Ctl.SetEffectPersistent(zone, eff); err != nil {
@@ -127,8 +127,9 @@ func SaveToProfiles(e *Entry, d *config.Device) (int, string, error) {
 // into d, so it shows and is written back as stored. On a keyboard with
 // profile storage that is the effect, dim level and timeouts. On a mouse
 // with onboard profiles a profile gets its own effect for a zone where it
-// differs from the effect for all profiles, and a zone without an effect
-// for all profiles takes the active profile's. d is only changed in memory.
+// differs from the effect for all profiles, a zone without an effect for all
+// profiles takes the active profile's, and each profile's report rate and
+// DPI levels are taken too. d is only changed in memory.
 func LoadProfiles(e *Entry, d *config.Device) error {
 	if e.Ctl.HasProfileStorage() {
 		sp, ok, err := e.Ctl.ReadProfile()
@@ -157,12 +158,12 @@ func LoadProfiles(e *Entry, d *config.Device) error {
 	for i, z := range e.Ctl.Zones() {
 		all, ok := d.Zone(i)
 		if !ok {
-			if all, ok = profiles[active-1][i]; ok {
+			if all, ok = profiles[active-1].Effects[i]; ok {
 				d.SetZone(i, all)
 			}
 		}
-		for p, effects := range profiles {
-			eff, stored := effects[i]
+		for p, prof := range profiles {
+			eff, stored := prof.Effects[i]
 			switch {
 			case !stored:
 			case ok && z.Same(eff, all):
@@ -171,6 +172,9 @@ func LoadProfiles(e *Entry, d *config.Device) error {
 				d.SetProfileZone(p+1, i, eff)
 			}
 		}
+	}
+	for p, prof := range profiles {
+		d.SetSettings(p+1, *prof.Settings)
 	}
 	return nil
 }
