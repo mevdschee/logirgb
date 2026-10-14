@@ -143,7 +143,9 @@ The protocol details come from reading
 in [logitech-g515-onboard](https://github.com/federico-duppa/logitech-g515-onboard),
 and were checked against real hardware.
 The [research](research/) folder collects the protocol notes, device
-details and hardware test results behind this tool.
+details and hardware test results behind this tool, together with
+a copy of Logitech's published HID++ 2.0 feature documents in
+[research/drive-download.zip](research/drive-download.zip).
 
 ## License
 

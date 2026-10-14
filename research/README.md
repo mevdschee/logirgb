@@ -30,5 +30,8 @@ comes from:
 Logitech has published HID++ 2.0 feature documents, including x8040, x8070,
 x8071 and x8081, in a public folder that Solaar links to:
 <https://drive.google.com/drive/folders/0BxbRzx7vEV7eWmgwazJ3NUFfQ28>.
-They are not copied into this repository. Nothing public exists for 0x8080,
+A copy of that folder is kept in
+[drive-download.zip](drive-download.zip) (48 files, including the RGB
+documents x8040, x8070, x8071 and x8081). Unzip it here to get
+`drive-download/`, which git ignores. Nothing public exists for 0x8080,
 0x8100 or 0x8101; those notes are based on tool sources and hardware tests.
