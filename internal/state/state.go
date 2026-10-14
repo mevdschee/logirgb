@@ -18,6 +18,9 @@ type Device struct {
 	// Profiles overrides the zone effects per onboard profile (1-based),
 	// for devices that store lighting in each profile (G502).
 	Profiles map[string]map[string]lighting.Effect
+	// Kept marks the zones per onboard profile (1-based) whose stored
+	// effect could not be read; they keep it when written until set.
+	Kept map[string]map[string]bool
 	// ProfileSettings holds the report rate and DPI levels per onboard
 	// profile (1-based); profiles without an entry keep what they store.
 	ProfileSettings map[string]*lighting.ProfileSettings
@@ -33,10 +36,13 @@ type Device struct {
 	DimPercent *int
 }
 
+// Effects are cloned on the way in and out, so an effect shared by several
+// profiles cannot be changed for all of them through one.
+
 // Zone returns the stored effect for a zone.
 func (d *Device) Zone(i int) (lighting.Effect, bool) {
 	e, ok := d.Zones[strconv.Itoa(i)]
-	return e, ok
+	return e.Clone(), ok
 }
 
 // SetZone stores the effect for a zone.
@@ -44,16 +50,41 @@ func (d *Device) SetZone(i int, e lighting.Effect) {
 	if d.Zones == nil {
 		d.Zones = map[string]lighting.Effect{}
 	}
-	d.Zones[strconv.Itoa(i)] = e
+	d.Zones[strconv.Itoa(i)] = e.Clone()
 }
 
 // ProfileZone returns the effect for a zone in an onboard profile: the
-// profile's own effect if it has one, else the effect for all profiles.
+// profile's own effect if it has one, else the effect for all profiles. A
+// kept zone has no effect.
 func (d *Device) ProfileZone(profile, i int) (lighting.Effect, bool) {
-	if e, ok := d.Profiles[strconv.Itoa(profile)][strconv.Itoa(i)]; ok {
-		return e, true
+	p, z := strconv.Itoa(profile), strconv.Itoa(i)
+	if e, ok := d.Profiles[p][z]; ok {
+		return e.Clone(), true
+	}
+	if d.Kept[p][z] {
+		return lighting.Effect{}, false
 	}
 	return d.Zone(i)
+}
+
+// KeepProfileZone marks a zone in an onboard profile as keeping its stored
+// effect, for an effect that could not be read.
+func (d *Device) KeepProfileZone(profile, i int) {
+	if d.Kept == nil {
+		d.Kept = map[string]map[string]bool{}
+	}
+	p := strconv.Itoa(profile)
+	if d.Kept[p] == nil {
+		d.Kept[p] = map[string]bool{}
+	}
+	d.Kept[p][strconv.Itoa(i)] = true
+}
+
+func (d *Device) unkeep(p, z string) {
+	delete(d.Kept[p], z)
+	if len(d.Kept[p]) == 0 {
+		delete(d.Kept, p)
+	}
 }
 
 // SetProfileZone stores the effect for a zone in one onboard profile.
@@ -65,7 +96,8 @@ func (d *Device) SetProfileZone(profile, i int, e lighting.Effect) {
 	if d.Profiles[p] == nil {
 		d.Profiles[p] = map[string]lighting.Effect{}
 	}
-	d.Profiles[p][strconv.Itoa(i)] = e
+	d.Profiles[p][strconv.Itoa(i)] = e.Clone()
+	d.unkeep(p, strconv.Itoa(i))
 }
 
 // ClearProfileZone drops a profile's own effect for a zone, so it uses the
@@ -79,7 +111,7 @@ func (d *Device) ClearProfileZone(profile, i int) {
 }
 
 // SetAllProfilesZone stores the effect for a zone in every onboard profile,
-// dropping the per profile effects for that zone.
+// dropping the per profile and kept effects for that zone.
 func (d *Device) SetAllProfilesZone(i int, e lighting.Effect) {
 	d.SetZone(i, e)
 	z := strconv.Itoa(i)
@@ -88,6 +120,9 @@ func (d *Device) SetAllProfilesZone(i int, e lighting.Effect) {
 		if len(zones) == 0 {
 			delete(d.Profiles, p)
 		}
+	}
+	for p := range d.Kept {
+		d.unkeep(p, z)
 	}
 }
 

@@ -6,6 +6,7 @@ package lighting
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strings"
 )
 
@@ -133,6 +134,12 @@ func (e Effect) Get(t EffectType, p Param) int {
 		}
 	}
 	return 0
+}
+
+// Clone returns a copy of e that does not share its parameter values.
+func (e Effect) Clone() Effect {
+	e.Values = maps.Clone(e.Values)
+	return e
 }
 
 // Set stores a parameter value.

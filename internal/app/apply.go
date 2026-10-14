@@ -132,8 +132,8 @@ func SaveToProfiles(e *Entry, d *state.Device) (int, string, error) {
 // profile storage that is the effect, dim level and timeouts. On a mouse
 // with onboard profiles a profile gets its own effect for a zone where it
 // differs from the effect for all profiles, a zone without an effect for all
-// profiles takes the active profile's, and each profile's report rate and
-// DPI levels are taken too.
+// profiles takes the active profile's, a zone whose effect cannot be read
+// keeps it, and each profile's report rate and DPI levels are taken too.
 func loadOnboard(e *Entry, d *state.Device) error {
 	if e.Ctl.HasProfileStorage() {
 		sp, ok, err := e.Ctl.ReadProfile()
@@ -170,6 +170,9 @@ func loadOnboard(e *Entry, d *state.Device) error {
 			eff, stored := prof.Effects[i]
 			switch {
 			case !stored:
+				// An effect that could not be read stays as stored,
+				// rather than taking the effect for all profiles.
+				d.KeepProfileZone(p+1, i)
 			case ok && z.Same(eff, all):
 				d.ClearProfileZone(p+1, i)
 			default:
