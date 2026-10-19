@@ -5,7 +5,7 @@ HID++ 2.0 directly over `/dev/hidraw`, so it needs no G HUB, Solaar, OpenRGB or
 libusb. It has a TUI and a scriptable CLI, and can store your lighting in the
 device itself so it survives power cycles without anything running.
 
-![logirgb TUI](screenshot.png)
+![logitech devices](logitech_rgb.jpg)
 
 Tested with:
 
@@ -19,6 +19,8 @@ the DPI LEDs. Those only light up briefly when you press a DPI or profile
 button, to show the DPI level. After a DPI button press they flash in the
 zone 0 color, after a profile button press they show blue regardless of
 zone 0.
+
+![logirgb TUI](screenshot.png)
 
 Other devices that expose 0x8070 or 0x8071 should work too. Devices are found
 by scanning `/sys/class/hidraw` for Logitech nodes that declare the HID++ long
