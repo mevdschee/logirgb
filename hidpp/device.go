@@ -220,6 +220,7 @@ func (d *Device) call(featIdx, fn byte, timeout time.Duration, params ...byte) (
 	req[2] = featIdx
 	req[3] = fnsw
 	copy(req[4:], params)
+	d.drain()
 	if _, err := unix.Write(d.fd, req); err != nil {
 		return nil, fmt.Errorf("write: %w", err)
 	}
