@@ -131,6 +131,25 @@ func putBE32(b []byte, v uint32) {
 	b[0], b[1], b[2], b[3] = byte(v>>24), byte(v>>16), byte(v>>8), byte(v)
 }
 
+// DumpProfileFiles reads the onboard profile files without validating
+// them, so an unknown layout can be reported and studied.
+func (c *Controller) DumpProfileFiles() (map[int][]byte, error) {
+	if !c.HasProfileStorage() {
+		return nil, errors.New("device has no profile storage")
+	}
+	out := map[int][]byte{}
+	for addr, size := range map[int]int{
+		pmFactoryDir: pmDirSize, pmFactoryProfile: pmProfileSize, pmUserDir: pmDirSize, pmUserProfile: pmProfileSize,
+	} {
+		b, err := c.pmRead(addr, size)
+		if err != nil {
+			return nil, err
+		}
+		out[addr] = b
+	}
+	return out, nil
+}
+
 type pmFiles struct {
 	factoryProfile, factoryDir, userProfile, userDir []byte
 }

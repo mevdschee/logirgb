@@ -68,6 +68,8 @@ func main() {
 		err = cmdProfiles(args)
 	case "reset-profiles":
 		err = cmdResetProfiles(args)
+	case "dump-profile":
+		err = cmdDumpProfile(args)
 	case "udev-rule":
 		fmt.Print(udev.Rule)
 	case "help", "-h", "--help":
@@ -494,6 +496,28 @@ func cmdResetProfiles(args []string) error {
 			return err
 		}
 		fmt.Printf("%s: back on the factory profiles\n", e.Name)
+		return nil
+	})
+}
+
+// cmdDumpProfile prints the raw onboard profile files of keyboards with
+// 0x8101, read only, to help support new layouts.
+func cmdDumpProfile(args []string) error {
+	fs := flag.NewFlagSet("dump-profile", flag.ExitOnError)
+	dev := fs.String("d", "", "device")
+	fs.Parse(args)
+	return eachDevice(*dev, func(e *app.Entry) error {
+		if !e.Usable() || !e.Ctl.HasProfileStorage() {
+			return nil
+		}
+		files, err := e.Ctl.DumpProfileFiles()
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%s [%s]\n", e.Name, e.Key)
+		for _, addr := range []int{0x0100, 0x0101, 0x0000, 0x0008} {
+			fmt.Printf("  file %#04x: % x\n", addr, files[addr])
+		}
 		return nil
 	})
 }
