@@ -131,23 +131,84 @@ func putBE32(b []byte, v uint32) {
 	b[0], b[1], b[2], b[3] = byte(v>>24), byte(v>>16), byte(v>>8), byte(v)
 }
 
+// A directory file looks like [crc32 u32, count, count 10 byte entries, ff],
+// each entry [id, 81 01, 40, length, crc32 u32, location]. The G515 TKL has
+// one entry, the G515 Rapid TKL several, so only the first 16 bytes match.
+const (
+	pmDirEntrySize = 10
+	pmDirMaxCount  = 24
+)
+
+// pmDirLen returns the length of a directory file from its first bytes.
+func pmDirLen(head []byte) int {
+	if len(head) < 5 || head[4] == 0 || head[4] > pmDirMaxCount {
+		return len(head)
+	}
+	return 5 + int(head[4])*pmDirEntrySize + 1
+}
+
+// pmDirEntries returns the complete entries of a directory file.
+func pmDirEntries(dir []byte) [][]byte {
+	if len(dir) < 5 {
+		return nil
+	}
+	var out [][]byte
+	for i := range int(dir[4]) {
+		o := 5 + i*pmDirEntrySize
+		if o+pmDirEntrySize > len(dir) {
+			break
+		}
+		out = append(out, dir[o:o+pmDirEntrySize])
+	}
+	return out
+}
+
+// DumpedFile is one file read by DumpProfileFiles.
+type DumpedFile struct {
+	Addr int
+	Data []byte // nil for a user file that was never written
+	Err  error
+}
+
+// ProfileDump is the raw onboard profile state of a 0x8101 keyboard.
+type ProfileDump struct {
+	Info, Mode []byte
+	Files      []DumpedFile
+}
+
 // DumpProfileFiles reads the onboard profile files without validating
-// them, so an unknown layout can be reported and studied.
-func (c *Controller) DumpProfileFiles() (map[int][]byte, error) {
+// them, so an unknown layout can be reported and studied. It reads each
+// directory at its full length and every file it lists, with the length the
+// directory gives. It only loads and reads, it never writes.
+func (c *Controller) DumpProfileFiles() (*ProfileDump, error) {
 	if !c.HasProfileStorage() {
 		return nil, errors.New("device has no profile storage")
 	}
-	out := map[int][]byte{}
-	for addr, size := range map[int]int{
-		pmFactoryDir: pmDirSize, pmFactoryProfile: pmProfileSize, pmUserDir: pmDirSize, pmUserProfile: pmProfileSize,
-	} {
+	var d ProfileDump
+	d.Info, _ = c.pmCall(0)
+	d.Mode, _ = c.pmCall(6, 0x00)
+	read := func(addr, size int) []byte {
 		b, err := c.pmRead(addr, size)
-		if err != nil {
-			return nil, err
-		}
-		out[addr] = b
+		d.Files = append(d.Files, DumpedFile{Addr: addr, Data: b, Err: err})
+		return b
 	}
-	return out, nil
+	for _, dirAddr := range []int{pmFactoryDir, pmUserDir} {
+		head, err := c.pmRead(dirAddr, pmDirSize)
+		dir := head
+		if n := pmDirLen(head); err == nil && n > len(head) {
+			dir, err = c.pmRead(dirAddr, n)
+		}
+		d.Files = append(d.Files, DumpedFile{Addr: dirAddr, Data: dir, Err: err})
+		if err != nil {
+			continue
+		}
+		for _, e := range pmDirEntries(dir) {
+			if e[4] > 0 {
+				read(dirAddr&0xFF00|int(e[9]), int(e[4]))
+			}
+		}
+	}
+	return &d, nil
 }
 
 type pmFiles struct {

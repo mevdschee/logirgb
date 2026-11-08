@@ -510,13 +510,25 @@ func cmdDumpProfile(args []string) error {
 		if !e.Usable() || !e.Ctl.HasProfileStorage() {
 			return nil
 		}
-		files, err := e.Ctl.DumpProfileFiles()
+		d, err := e.Ctl.DumpProfileFiles()
 		if err != nil {
 			return err
 		}
 		fmt.Printf("%s [%s]\n", e.Name, e.Key)
-		for _, addr := range []int{0x0100, 0x0101, 0x0000, 0x0008} {
-			fmt.Printf("  file %#04x: % x\n", addr, files[addr])
+		fmt.Printf("  info: % x\n", d.Info)
+		fmt.Printf("  mode: % x\n", d.Mode)
+		for _, f := range d.Files {
+			switch {
+			case f.Err != nil:
+				fmt.Printf("  file %#04x: %v\n", f.Addr, f.Err)
+			case f.Data == nil:
+				fmt.Printf("  file %#04x: not present\n", f.Addr)
+			default:
+				fmt.Printf("  file %#04x (%d bytes):\n", f.Addr, len(f.Data))
+				for o := 0; o < len(f.Data); o += 16 {
+					fmt.Printf("    %3d: % x\n", o, f.Data[o:min(o+16, len(f.Data))])
+				}
+			}
 		}
 		return nil
 	})
