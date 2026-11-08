@@ -21,6 +21,9 @@ hardware tests.
 - **[ksanislo]** G HUB captures and hardware tests by Ken Sanislo, posted in
   Solaar PR #3149 (G515 LIGHTSPEED TKL).
 - **[Solaar]**, **[OpenRGB]**: from that tool's source code.
+- **[issue #2]** a read-only dump from a G515 Rapid TKL (`046d:c363`)
+  posted in this project's issue #2. Only the first 16 bytes of each
+  directory and the first 99 bytes of the factory profile were read.
 - **[unverified]** our inference, or a single unconfirmed claim.
 
 Function numbers are the high nibble of the HID++ function byte (`fn6` is
@@ -31,6 +34,7 @@ sent as `0x6?`). All multi-byte fields are big endian.
 | Device | USB PID / WPID | 0x8101 index | Source |
 |---|---|---|---|
 | G515 TKL (wired) | `c358` | discovered at runtime | [HW] |
+| G515 Rapid TKL | `c363` | discovered at runtime | [issue #2] |
 | G515 LIGHTSPEED TKL | `c355` / `40B4` | `0x0e` on one unit, `0x0f` on others | [g515-onboard], Solaar device dump `docs/devices/G515 LS TKL 40B4.text` |
 | G915 X LIGHTSPEED | `c356` / `40B5` | `0x0f` | Solaar issues #3328, #3137, #3205 |
 
@@ -159,6 +163,48 @@ pfps saw `03 01 01` on a G515 that had never been configured. G HUB probably
 activates with a different file ID than the one used here; the exact rule is
 **[unverified]**.
 
+## Directory file
+
+A directory file holds a count and a list of 10 byte entries:
+
+```
+[crc32 u32, count, count x entry, ff]
+entry: [id, 81 01, 40, length, crc32 u32, location]
+```
+
+The CRC at 0-3 covers everything from byte 4 to the end, so it can only be
+checked after reading the full file (`5 + 10 * count + 1` bytes). On the
+G515 TKL count is 1, which gives the 16 byte file in the table below. This
+reading fits both devices but comes from a single partial Rapid dump
+**[unverified]**.
+
+### G515 Rapid TKL [issue #2]
+
+First 16 bytes of each directory:
+
+```
+0x0100  1b c0 c0 db 04 01 81 01 40 6d 3b d4 06 de 01 02   factory, count 4
+0x0000  22 56 be 0a 05 01 81 01 40 6d 7f 7c fa ab 08 02   user, count 5
+```
+
+- Byte 4 is `04` (factory) and `05` (user) instead of `01`. Byte 15 is
+  `02`, the id of the second entry, instead of the `ff` terminator. With
+  the 16 byte read the CRC at 0-3 does not validate, as expected for a
+  truncated file. Full lengths would be 46 and 56 bytes.
+- Entry 1 has the same shape as on the G515 TKL, with length `6d`: the
+  profile is 109 bytes. Its location is `01` (factory) and `08` (user), the
+  same slots as the G515 TKL.
+- What entries 2-5 point to is unknown; effect cards are a guess.
+- The user directory was already present before this project touched the
+  device, probably written by G HUB. Loading `0x0008` with length 99
+  returned nothing (the old dump printed error `0x04` on a user address as
+  empty), while the directory lists a 109 byte file, so fn8 may need the
+  exact length for user files **[unverified]**. Loading the factory
+  profile with 99 bytes worked.
+
+`dump-profile` reads each directory at its full length and every file it
+lists with the entry's length, to complete this picture.
+
 ## Directory entry (16 bytes)
 
 | Offset | Size | Factory (`0x0100`) | User (`0x0000`, this project) | Meaning |
@@ -227,6 +273,32 @@ OpenRGB's comment on the same file: it is "the canonical storage for
 persisted device state on G-series devices: idle/sleep timers, baseline RGB
 effect, FKC enable, and more". What "FKC" covers (probably a function key
 or game mode setting in bytes 75-98) is **[unverified]**.
+
+### G515 Rapid TKL factory profile [issue #2]
+
+First 99 of 109 bytes of `0x0101`:
+
+```
+01 01 ff ff ff ff ff ff ff ff ff ff ff ff ff ff   header, timers ff ff ff ff, name...
+ff ff ff ff ff ff ff ff ff ff ff ff ff ff 01 ff   ...name, rec0
+72 03 00 00 00 00 00 00 00 01 ff 72 03 00 00 00   rec0 cont., rec1
+00 00 00 00 01 80 39 01 00 00 00 00 00 00 00 01   rec1, rec2
+80 39 01 00 00 00 00 00 00 00 00 00 00 00 00 00   rec3, flags 00, ...
+00 00 00 08 01 00 00 00 00 00 00 0a 01 ff ff 01
+04 ff ff
+```
+
+The first 75 bytes match the G515 TKL layout: records 0 and 1 hold static
+orange `ff 72 03`, records 2 and 3 the same at 50% (`80 39 01`), flags `00`.
+Bytes 75-98 differ from the G515 TKL (`08 01` where the TKL has `10 00 01`).
+The timer bytes are `ff ff` (never) although 0x8071 reported idle 1800 s on
+the same device, so the Rapid may keep its timers elsewhere, maybe in the
+10 bytes not read yet **[unverified]**.
+
+Writing for the Rapid would need: the profile length from directory entry 1,
+a user directory rebuilt by changing only entry 1's CRC and location and
+keeping the other entries, and `00 6d` instead of `00 63` in fn9
+**[unverified]**.
 
 ### Lighting records
 
@@ -403,7 +475,8 @@ Consequences:
   models, and warns explicitly against the wired-only G515 and G915. This
   project validated the layout on the wired G515 TKL (`c358`) and checks the
   header and directory signature before every write; other devices with
-  0x8101 (G915 X) are untested.
+  0x8101 (G915 X) are untested. The G515 Rapid TKL uses a longer directory
+  and a 109 byte profile and is refused by these checks (see above).
 
 ## Sources
 
