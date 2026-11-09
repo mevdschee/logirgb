@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -94,6 +95,9 @@ func scan() ([]*app.Entry, error) {
 		fmt.Fprintln(os.Stderr, app.PermissionHelp(denied))
 	}
 	if len(entries) == 0 {
+		if runtime.GOOS != "linux" {
+			return nil, fmt.Errorf("no Logitech HID++ devices found: logirgb only supports Linux (it uses /dev/hidraw), not %s", runtime.GOOS)
+		}
 		return nil, errors.New("no Logitech HID++ devices found")
 	}
 	return entries, nil

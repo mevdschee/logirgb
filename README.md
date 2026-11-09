@@ -1,6 +1,7 @@
 # logirgb
 
-`logirgb` sets the RGB lighting of Logitech G devices on Linux. It talks
+`logirgb` sets the RGB lighting of Logitech G devices on Linux (only Linux:
+macOS and Windows have no hidraw and are not supported). It talks
 HID++ 2.0 directly over `/dev/hidraw`, so it needs no G HUB, Solaar, OpenRGB or
 libusb. It has a TUI and a scriptable CLI, and can store your lighting in the
 device itself so it survives power cycles without anything running.
