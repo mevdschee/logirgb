@@ -156,6 +156,8 @@ const (
 	NeedLighting Need = iota
 	// NeedHeadset asks for a headset with sidetone or auto-off.
 	NeedHeadset
+	// NeedOpen asks for any device that answers.
+	NeedOpen
 )
 
 // check returns why the entry does not have what is needed.

@@ -36,6 +36,11 @@ Untested, but supported from what other tools know about them:
 | G915 and G915 TKL | Lighting of the keys and the logo, brightness. Live only: the change lasts until the keyboard is turned off. The keyboard stays in onboard mode, because host mode loses the G key functions of the G915 TKL's F row. |
 | PRO X Wireless and other G headsets with 0x8300 | Sidetone, and on the PRO X Wireless the time before it turns off when idle (0x1F20). |
 
+If your device is missing or does not work, run `logirgb report -d <device>`
+and paste its output in a [new issue](https://github.com/mevdschee/logirgb/issues/new).
+The report only reads from the device. It leaves out the unit ID and the
+name you gave the device.
+
 ## Install
 
 ```bash
@@ -89,6 +94,7 @@ logirgb release                                  # drop a preview
 logirgb profiles -d g502 --disable 3,4,5         # profile button cycles 1 and 2
 logirgb reset-profiles -d g502                   # back to the factory profiles
 logirgb headset --sidetone 40 --auto-off 30      # headset settings, stored right away
+logirgb report -d g915                           # what a device supports, read only
 ```
 
 Effects are `off`, `static`, `pulse`, `breathe`, `cycle`, `wave`, `ripple` and

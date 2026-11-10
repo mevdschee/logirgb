@@ -14,6 +14,7 @@ import (
 	"github.com/mevdschee/logirgb/headset"
 	"github.com/mevdschee/logirgb/hidpp"
 	"github.com/mevdschee/logirgb/internal/app"
+	"github.com/mevdschee/logirgb/internal/report"
 	"github.com/mevdschee/logirgb/internal/state"
 	"github.com/mevdschee/logirgb/internal/tui"
 	"github.com/mevdschee/logirgb/internal/udev"
@@ -34,6 +35,7 @@ Usage:
   logirgb reset-profiles [-d dev]  go back to the factory onboard profiles
   logirgb headset [-d dev] [--sidetone 0-100] [--auto-off minutes]
                                 show or change the sidetone and auto-off of a headset
+  logirgb report [-d dev]       print what a device supports, to request support for it
   logirgb udev-rule             print the udev rule granting device access
 
 Devices (-d) are selected by list number, hidraw path or name fragment
@@ -77,6 +79,8 @@ func main() {
 		err = cmdDumpProfile(args)
 	case "headset":
 		err = cmdHeadset(args)
+	case "report":
+		err = cmdReport(args)
 	case "udev-rule":
 		fmt.Print(udev.Rule)
 	case "help", "-h", "--help":
@@ -658,6 +662,31 @@ func minutes(v int) string {
 		return "never"
 	}
 	return fmt.Sprintf("after %d min", v)
+}
+
+func cmdReport(args []string) error {
+	fs := flag.NewFlagSet("report", flag.ExitOnError)
+	dev := fs.String("d", "", "device")
+	fs.Parse(args)
+	entries, err := scan()
+	if err != nil {
+		return err
+	}
+	defer app.Close(entries)
+	targets := entries
+	if *dev != "" {
+		if targets, err = app.Select(entries, *dev, app.NeedOpen); err != nil {
+			return err
+		}
+	}
+	for i, e := range targets {
+		if i > 0 {
+			fmt.Println()
+		}
+		fmt.Print(report.Build(e))
+	}
+	fmt.Fprintf(os.Stderr, "\nThe report only reads from the device. To ask for support, paste it in a new issue:\n%s\n", report.IssueURL)
+	return nil
 }
 
 // parseArgs parses flags that may appear before or after positional
