@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/mevdschee/logirgb/headset"
 	"github.com/mevdschee/logirgb/hidpp"
 	"github.com/mevdschee/logirgb/internal/app"
 	"github.com/mevdschee/logirgb/internal/state"
@@ -30,6 +32,8 @@ Usage:
   logirgb profiles [-d dev] [--enable n,..] [--disable n,..]
                                 show or choose the profiles the profile button cycles through
   logirgb reset-profiles [-d dev]  go back to the factory onboard profiles
+  logirgb headset [-d dev] [--sidetone 0-100] [--auto-off minutes]
+                                show or change the sidetone and auto-off of a headset
   logirgb udev-rule             print the udev rule granting device access
 
 Devices (-d) are selected by list number, hidraw path or name fragment
@@ -71,6 +75,8 @@ func main() {
 		err = cmdResetProfiles(args)
 	case "dump-profile":
 		err = cmdDumpProfile(args)
+	case "headset":
+		err = cmdHeadset(args)
 	case "udev-rule":
 		fmt.Print(udev.Rule)
 	case "help", "-h", "--help":
@@ -123,6 +129,12 @@ func cmdList(args []string) error {
 		}
 		if !e.Usable() {
 			fmt.Printf("   unavailable: %v\n", e.Err)
+			continue
+		}
+		if hs := e.Headset; hs != nil {
+			printHeadset(hs)
+		}
+		if e.Ctl == nil {
 			continue
 		}
 		ctl := e.Ctl
@@ -257,7 +269,7 @@ func cmdSet(args []string) error {
 		return err
 	}
 	defer app.Close(entries)
-	targets, err := app.Select(entries, *dev)
+	targets, err := app.Select(entries, *dev, app.NeedLighting)
 	if err != nil {
 		return err
 	}
@@ -285,10 +297,22 @@ func cmdSet(args []string) error {
 				return fmt.Errorf("%s: active profile: %w", e.Name, err)
 			}
 		}
+		set := 0
 		for _, z := range zones {
+			eff := eff
+			if *zone < 0 {
+				// Without -z each zone shows the closest effect it has, so
+				// the logo follows the keys.
+				var ok bool
+				if eff, ok = e.Ctl.Zones()[z].Closest(eff); !ok {
+					fmt.Printf("%s zone %d: no %s or similar effect, skipped\n", e.Name, z, pos[0])
+					continue
+				}
+			}
 			if err := e.Ctl.SetEffect(z, eff); err != nil {
 				return fmt.Errorf("%s: %w", e.Name, err)
 			}
+			set++
 			where := fmt.Sprintf("zone %d", z)
 			if p > 0 {
 				d.SetProfileZone(p, z, eff)
@@ -297,6 +321,9 @@ func cmdSet(args []string) error {
 				d.SetZone(z, eff)
 			}
 			fmt.Printf("%s %s: %s\n", e.Name, where, describe(e.Ctl.Zones()[z], eff))
+		}
+		if set == 0 {
+			return fmt.Errorf("%s: no zone supports %q", e.Name, eff.Name)
 		}
 		if err := store(e, d, *preview); err != nil {
 			return fmt.Errorf("%s: %w", e.Name, err)
@@ -545,14 +572,19 @@ func cmdDumpProfile(args []string) error {
 	})
 }
 
-// eachDevice runs fn for the selected devices.
+// eachDevice runs fn for the selected devices with lighting.
 func eachDevice(sel string, fn func(*app.Entry) error) error {
+	return each(sel, app.NeedLighting, fn)
+}
+
+// each runs fn for the selected devices that have what is needed.
+func each(sel string, need app.Need, fn func(*app.Entry) error) error {
 	entries, err := scan()
 	if err != nil {
 		return err
 	}
 	defer app.Close(entries)
-	targets, err := app.Select(entries, sel)
+	targets, err := app.Select(entries, sel, need)
 	if err != nil {
 		return err
 	}
@@ -562,6 +594,70 @@ func eachDevice(sel string, fn func(*app.Entry) error) error {
 		}
 	}
 	return nil
+}
+
+func cmdHeadset(args []string) error {
+	fs := flag.NewFlagSet("headset", flag.ExitOnError)
+	dev := fs.String("d", "", "device")
+	sidetone := fs.Int("sidetone", -1, "how loud you hear your own voice, 0-100")
+	autoOff := fs.Int("auto-off", -1, fmt.Sprintf("minutes without sound before the headset turns off, 0 is never (%s)", minutesList()))
+	fs.Parse(args)
+	if *sidetone > 100 {
+		return errors.New("sidetone must be 0-100")
+	}
+	if *autoOff >= 0 && !slices.Contains(headset.AutoOffMinutes, *autoOff) {
+		return fmt.Errorf("auto-off must be one of %s minutes", minutesList())
+	}
+	return each(*dev, app.NeedHeadset, func(e *app.Entry) error {
+		hs := e.Headset
+		if *sidetone >= 0 {
+			if !hs.HasSidetone() {
+				return errors.New("no sidetone")
+			}
+			if err := hs.SetSidetone(*sidetone); err != nil {
+				return err
+			}
+		}
+		if *autoOff >= 0 {
+			if !hs.HasAutoOff() {
+				return errors.New("no auto-off setting")
+			}
+			if err := hs.SetAutoOff(*autoOff); err != nil {
+				return err
+			}
+		}
+		fmt.Println(e.Name)
+		printHeadset(hs)
+		return nil
+	})
+}
+
+func minutesList() string {
+	var ms []string
+	for _, m := range headset.AutoOffMinutes {
+		ms = append(ms, strconv.Itoa(m))
+	}
+	return strings.Join(ms, ", ")
+}
+
+func printHeadset(hs *headset.Controller) {
+	if hs.HasSidetone() {
+		if v, err := hs.Sidetone(); err == nil {
+			fmt.Printf("   sidetone: %d (0-100)\n", v)
+		}
+	}
+	if hs.HasAutoOff() {
+		if v, err := hs.AutoOff(); err == nil {
+			fmt.Printf("   auto-off: %s\n", minutes(v))
+		}
+	}
+}
+
+func minutes(v int) string {
+	if v == 0 {
+		return "never"
+	}
+	return fmt.Sprintf("after %d min", v)
 }
 
 // parseArgs parses flags that may appear before or after positional

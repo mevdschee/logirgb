@@ -3,6 +3,7 @@ package lighting
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/mevdschee/logirgb/hidpp"
 )
@@ -57,11 +58,35 @@ var zoneDescriptions = map[uint16][]string{
 	0xC08B: {"DPI LEDs, flash on DPI button press", "G logo"},
 }
 
+// keepOnboardModels must stay in onboard mode while the host sets their
+// lighting: in host mode the G915 TKL loses the G key functions of its F row
+// (Solaar issue 3266). These are the G915 and G915 TKL over USB, LIGHTSPEED
+// and Bluetooth.
+var keepOnboardModels = map[uint16]bool{
+	0xC33E: true, 0x407C: true, 0x407E: true, 0xB354: true, // G915
+	0xC343: true, 0x408E: true, 0xB35F: true, // G915 TKL
+}
+
+// keepOnboard reports whether the device is a G915 or G915 TKL. Behind a
+// receiver the node has the receiver's product ID, so the name decides.
+func keepOnboard(dev *hidpp.Device) bool {
+	if keepOnboardModels[dev.Info.ProductID] {
+		return true
+	}
+	name := strings.ToUpper(dev.Name())
+	return strings.Contains(name, "G915") && !strings.Contains(name, "G915 X")
+}
+
 // Controller exposes the lighting capabilities of one device.
 type Controller struct {
 	dev     *hidpp.Device
 	feature uint16
 	zones   []Zone
+	// onboard keeps the device in onboard mode when the host takes the
+	// lighting.
+	onboard bool
+	// timers is set when 0x8071 has the idle and sleep timers (fn 7).
+	timers bool
 }
 
 // ErrNoLighting is returned for devices without a supported RGB feature.
@@ -80,6 +105,12 @@ func New(dev *hidpp.Device) (*Controller, error) {
 	}
 	if err := c.enumerate(); err != nil {
 		return nil, fmt.Errorf("enumerate zones: %w", err)
+	}
+	if c.feature == hidpp.FeatureRGBEffects {
+		c.onboard = keepOnboard(dev)
+		// Older 0x8071 versions, like the G915's, have no fn 7.
+		_, _, err := c.Timers()
+		c.timers = err == nil
 	}
 	return c, nil
 }
@@ -169,6 +200,9 @@ func (c *Controller) Claim() error {
 	if c.feature != hidpp.FeatureRGBEffects {
 		return nil
 	}
+	if c.onboard {
+		return c.setSWControl(swActive)
+	}
 	if c.dev.HasFeature(hidpp.FeatureProfileManagement) {
 		if _, err := c.dev.Call(hidpp.FeatureProfileManagement, 6, 0x05); err != nil {
 			return fmt.Errorf("profile management: %w", err)
@@ -188,6 +222,9 @@ func (c *Controller) Release() error {
 	}
 	if err := c.setSWControl(swRelease); err != nil {
 		return err
+	}
+	if c.onboard {
+		return nil
 	}
 	if c.dev.HasFeature(hidpp.FeatureProfileManagement) {
 		_, err := c.dev.Call(hidpp.FeatureProfileManagement, 6, 0x03)
@@ -325,7 +362,7 @@ func (c *Controller) SetBrightness(v int) error {
 
 // HasTimers reports whether the device keeps idle/sleep timers in firmware.
 func (c *Controller) HasTimers() bool {
-	return c.feature == hidpp.FeatureRGBEffects
+	return c.timers
 }
 
 // timerNever is the wire value for a timeout that never expires. A literal 0

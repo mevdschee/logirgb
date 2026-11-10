@@ -14,6 +14,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/mevdschee/logirgb/headset"
 	"github.com/mevdschee/logirgb/hidpp"
 	"github.com/mevdschee/logirgb/internal/app"
 	"github.com/mevdschee/logirgb/internal/state"
@@ -54,6 +55,8 @@ const (
 	rowIdle
 	rowSleep
 	rowDim
+	rowSidetone
+	rowAutoOff
 )
 
 type row struct {
@@ -88,6 +91,9 @@ type devState struct {
 	sleep      int
 	dim        int
 	claimed    bool
+	// sidetone and autoOff are the headset settings, set as they change.
+	sidetone int
+	autoOff  int
 	// dev holds the settings as read from the device plus the edits;
 	// dirty is set while edits have not been written to onboard memory.
 	dev   *state.Device
@@ -164,6 +170,17 @@ func (m *model) initState(e *app.Entry) *devState {
 		m.setStatus(fmt.Errorf("%s: read onboard memory: %w", e.Name, err))
 	}
 	s.dev = saved
+	if hs := e.Headset; hs != nil {
+		if hs.HasSidetone() {
+			s.sidetone, _ = hs.Sidetone()
+		}
+		if hs.HasAutoOff() {
+			s.autoOff, _ = hs.AutoOff()
+		}
+	}
+	if e.Ctl == nil {
+		return s
+	}
 	s.claimed, _ = e.Ctl.Claimed()
 	if e.Ctl.HasOnboardProfiles() {
 		s.profiles, _ = e.Ctl.ProfileCount()
@@ -242,6 +259,17 @@ func (m *model) rows() []row {
 		return nil
 	}
 	var rows []row
+	if hs := e.Headset; hs != nil {
+		if hs.HasSidetone() {
+			rows = append(rows, row{kind: rowSidetone, label: "Sidetone"})
+		}
+		if hs.HasAutoOff() {
+			rows = append(rows, row{kind: rowAutoOff, label: "Turn off after"})
+		}
+	}
+	if e.Ctl == nil {
+		return rows
+	}
 	zones := e.Ctl.Zones()
 	if s.profiles > 0 {
 		rows = append(rows,
@@ -331,7 +359,7 @@ func (m *model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "o":
-		if e, s := m.current(); e != nil && e.Usable() {
+		if e, s := m.current(); e != nil && e.Ctl != nil {
 			if err := e.Ctl.Release(); err != nil {
 				m.setStatus(err)
 				return m, nil
@@ -345,6 +373,10 @@ func (m *model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "w":
 		if e, _ := m.current(); e != nil && e.Usable() {
+			if e.Ctl == nil {
+				m.setStatus(nil, "headset settings are stored as you change them")
+				return m, nil
+			}
 			if !writable(e) {
 				m.setStatus(errors.New("this device has no onboard memory; changes are live only"))
 				return m, nil
@@ -406,7 +438,7 @@ func (m *model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // writable reports whether the device has onboard memory to write to.
 func writable(e *app.Entry) bool {
-	return e.Ctl.HasOnboardProfiles() || e.Ctl.HasProfileStorage()
+	return e.Ctl != nil && (e.Ctl.HasOnboardProfiles() || e.Ctl.HasProfileStorage())
 }
 
 // unwritten returns the indexes of the devices with unwritten changes.
@@ -496,6 +528,7 @@ var helpSections = []struct {
 	{"Good to know", [][2]string{
 		{"lighting", "shows right away, but a profile switch or power cycle undoes it until you press w"},
 		{"DPI, rate", "only change on the mouse when you press w"},
+		{"headsets", "store sidetone and auto-off as soon as you change them"},
 		{"profiles", "start on the profile the mouse is running, marked active"},
 		{"enabled", "the profile button skips profiles that are not enabled; the active one stays enabled"},
 		{"settings", "are read from the device; edits are kept until you write them with w"},
@@ -608,6 +641,10 @@ func stepThrough(steps []int, cur, dir int) int {
 
 func (m *model) adjust(r row, dir int, big bool) {
 	e, s := m.current()
+	if r.kind == rowSidetone || r.kind == rowAutoOff {
+		m.adjustHeadset(r, dir, big)
+		return
+	}
 	zones := e.Ctl.Zones()
 	if r.kind == rowEffect || r.kind == rowParam {
 		s.zone = r.zone
@@ -677,6 +714,31 @@ func (m *model) adjust(r row, dir int, big bool) {
 		m.changed()
 		m.setStatus(app.ApplyTimers(e, d), "press w to store it in the keyboard")
 	}
+}
+
+// adjustHeadset changes the sidetone or auto-off time of a headset. The
+// headset stores them right away.
+func (m *model) adjustHeadset(r row, dir int, big bool) {
+	e, s := m.current()
+	switch r.kind {
+	case rowSidetone:
+		step := 5
+		if big {
+			step = 20
+		}
+		s.sidetone = clamp(s.sidetone+dir*step, 0, 100)
+		m.setStatus(e.Headset.SetSidetone(s.sidetone), fmt.Sprintf("sidetone %d", s.sidetone))
+	case rowAutoOff:
+		s.autoOff = stepThrough(headset.AutoOffMinutes, s.autoOff, dir)
+		m.setStatus(e.Headset.SetAutoOff(s.autoOff), "turn off after "+offMinutes(s.autoOff))
+	}
+}
+
+func offMinutes(v int) string {
+	if v == 0 {
+		return "never"
+	}
+	return strconv.Itoa(v) + " min"
 }
 
 // adjustSettings changes the report rate or a DPI setting of the selected
@@ -1088,6 +1150,7 @@ func (m *model) viewSettings(width int) (string, int) {
 		b.WriteString(dimStyle.Render(info) + "\n")
 	}
 	switch {
+	case e.Ctl == nil:
 	case !s.claimed:
 		b.WriteString(dimStyle.Render("showing the onboard lighting") + "\n")
 	case e.Ctl.HasProfileStorage():
@@ -1095,12 +1158,23 @@ func (m *model) viewSettings(width int) (string, int) {
 	}
 	b.WriteString("\n")
 
-	zones := e.Ctl.Zones()
+	var zones []lighting.Zone
+	if e.Ctl != nil {
+		zones = e.Ctl.Zones()
+	}
 	for i, r := range m.rows() {
-		eff := s.effects[s.profile][r.zone]
-		ze, _ := zones[r.zone].Find(eff.Name)
+		var eff lighting.Effect
+		var ze lighting.ZoneEffect
+		if zones != nil {
+			eff = s.effects[s.profile][r.zone]
+			ze, _ = zones[r.zone].Find(eff.Name)
+		}
 		var val string
 		switch r.kind {
+		case rowSidetone:
+			val = fmt.Sprintf("%d  %s", s.sidetone, bar(s.sidetone, 100))
+		case rowAutoOff:
+			val = offMinutes(s.autoOff)
 		case rowProfile:
 			val = fmt.Sprintf("%d of %d", s.profile, s.profiles)
 			if s.active > 0 && s.profile == s.active {
@@ -1162,6 +1236,9 @@ func (m *model) viewSettings(width int) (string, int) {
 		} else {
 			b.WriteString("  " + label + "   " + val + "\n")
 		}
+	}
+	if e.Ctl == nil {
+		return strings.TrimRight(b.String(), "\n"), sel
 	}
 	if e.Ctl.HasOnboardProfiles() {
 		b.WriteString("\n" + dimStyle.Render(truncate("not stored until w; lost on a profile switch", width)))

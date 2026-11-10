@@ -13,6 +13,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/mevdschee/logirgb/headset"
 	"github.com/mevdschee/logirgb/hidpp"
 	"github.com/mevdschee/logirgb/internal/state"
 	"github.com/mevdschee/logirgb/internal/udev"
@@ -36,12 +37,13 @@ type Entry struct {
 	Kind    string
 	Dev     *hidpp.Device
 	Ctl     *lighting.Controller
+	Headset *headset.Controller
 	Battery *hidpp.Battery
 	Err     error
 }
 
-// Usable reports whether the device can be controlled.
-func (e *Entry) Usable() bool { return e.Ctl != nil }
+// Usable reports whether the device has settings logirgb can change.
+func (e *Entry) Usable() bool { return e.Ctl != nil || e.Headset != nil }
 
 // Slot describes where a device behind a receiver sits, or "" for a device
 // attached directly.
@@ -53,8 +55,8 @@ func (e *Entry) Slot() string {
 }
 
 // Scan discovers Logitech HID++ devices, every paired device of a receiver
-// included, and opens those with lighting. Devices that cannot be opened
-// are returned with Err set.
+// included, and opens them. Devices that cannot be opened or have nothing
+// to change are returned with Err set.
 func Scan(softwareID byte) ([]*Entry, error) {
 	infos, err := hidpp.Discover()
 	if err != nil {
@@ -124,11 +126,17 @@ func open(e *Entry, dev *hidpp.Device, softwareID byte) {
 	e.Kind = dev.Kind()
 	e.Battery, _ = dev.Battery()
 	ctl, err := lighting.New(dev)
-	if err != nil {
-		e.Err = err
-		return
+	if err == nil {
+		e.Ctl = ctl
 	}
-	e.Ctl = ctl
+	if hs, herr := headset.New(dev); herr == nil {
+		e.Headset = hs
+	} else if e.Ctl == nil {
+		if errors.Is(err, lighting.ErrNoLighting) {
+			err = errors.New("no lighting or headset settings logirgb can change")
+		}
+		e.Err = err
+	}
 }
 
 // Close releases all opened devices.
@@ -140,14 +148,38 @@ func Close(entries []*Entry) {
 	}
 }
 
+// Need is what a command needs a device to have.
+type Need int
+
+const (
+	// NeedLighting asks for a device with lighting.
+	NeedLighting Need = iota
+	// NeedHeadset asks for a headset with sidetone or auto-off.
+	NeedHeadset
+)
+
+// check returns why the entry does not have what is needed.
+func (e *Entry) check(n Need) error {
+	if e.Dev == nil {
+		return e.Err
+	}
+	switch {
+	case n == NeedLighting && e.Ctl == nil:
+		return errors.New("no lighting logirgb can change")
+	case n == NeedHeadset && e.Headset == nil:
+		return errors.New("no headset settings")
+	}
+	return nil
+}
+
 // Select picks devices by list number (1-based), hidraw path or a case
 // insensitive name fragment such as "g515". An empty selector picks all
-// usable devices.
-func Select(entries []*Entry, sel string) ([]*Entry, error) {
+// devices that have what is needed.
+func Select(entries []*Entry, sel string, need Need) ([]*Entry, error) {
 	var out []*Entry
 	if sel == "" {
 		for _, e := range entries {
-			if e.Usable() {
+			if e.check(need) == nil {
 				out = append(out, e)
 			}
 		}
@@ -173,8 +205,8 @@ func Select(entries []*Entry, sel string) ([]*Entry, error) {
 		return nil, fmt.Errorf("no device matches %q", sel)
 	}
 	for _, e := range out {
-		if !e.Usable() {
-			return nil, fmt.Errorf("%s (%s): %v", e.Name, e.Info.Path, e.Err)
+		if err := e.check(need); err != nil {
+			return nil, fmt.Errorf("%s (%s): %v", e.Name, e.Info.Path, err)
 		}
 	}
 	return out, nil

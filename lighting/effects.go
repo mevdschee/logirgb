@@ -90,6 +90,25 @@ var effectTypes = map[uint16]EffectType{
 		overrides: map[Param]ParamSpec{ParamPeriod: {Min: 2, Max: 200, Default: 20, Step: 2}}},
 }
 
+// fallbacks name the effect a zone shows instead of one it lacks, so the
+// logo follows the keys on keyboards like the G915, whose logo has fewer
+// effects.
+var fallbacks = map[string]string{"wave": "cycle", "ripple": "static", "starlight": "static", "pulse": "breathe"}
+
+// Closest returns the effect the zone shows for e: e itself when the zone
+// has it, else the nearest effect it has with the same parameter values.
+// ok is false when the zone has nothing close.
+func (z Zone) Closest(e Effect) (Effect, bool) {
+	for name := e.Name; name != ""; name = fallbacks[name] {
+		if _, ok := z.Find(name); ok {
+			out := e.Clone()
+			out.Name = name
+			return out, true
+		}
+	}
+	return Effect{}, false
+}
+
 // IsColor reports whether the parameter holds an RGB color.
 func (p Param) IsColor() bool { return p == ParamColor || p == ParamColor2 }
 

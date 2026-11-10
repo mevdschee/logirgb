@@ -109,3 +109,23 @@ func TestDecode(t *testing.T) {
 		t.Errorf("decode ROM cycle = %v, want %v", got, want)
 	}
 }
+
+func TestClosest(t *testing.T) {
+	logo := Zone{Effects: []ZoneEffect{
+		{Type: effectTypes[0x00]}, {Type: effectTypes[0x01]}, {Type: effectTypes[0x03]}, {Type: effectTypes[0x0A]},
+	}}
+	cases := map[string]string{"static": "static", "wave": "cycle", "ripple": "static", "breathe": "breathe"}
+	for in, want := range cases {
+		e := Effect{Name: in, Values: map[Param]int{ParamColor: 0xFF0000}}
+		got, ok := logo.Closest(e)
+		if !ok || got.Name != want {
+			t.Errorf("Closest(%s) = %s, %v, want %s", in, got.Name, ok, want)
+		}
+		if got.Values[ParamColor] != 0xFF0000 {
+			t.Errorf("Closest(%s) lost the color", in)
+		}
+	}
+	if _, ok := (Zone{Effects: []ZoneEffect{{Type: effectTypes[0x00]}}}).Closest(Effect{Name: "wave"}); ok {
+		t.Error("Closest found an effect the zone lacks")
+	}
+}

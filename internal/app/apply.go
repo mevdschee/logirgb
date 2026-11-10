@@ -12,6 +12,9 @@ import (
 // device reports them.
 func Load(e *Entry) (*state.Device, error) {
 	d := &state.Device{Name: e.Name}
+	if e.Ctl == nil {
+		return d, nil
+	}
 	if e.Ctl.HasBrightness() {
 		if v, err := e.Ctl.Brightness(); err == nil {
 			d.Brightness = state.IntPtr(v)

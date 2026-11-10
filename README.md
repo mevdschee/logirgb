@@ -29,6 +29,13 @@ report. Every device paired with a LIGHTSPEED, Unifying or Bolt receiver is
 listed, also when several share one receiver, and paired devices that are
 asleep show up as such. Wireless devices show their battery.
 
+Untested, but supported from what other tools know about them:
+
+| Device | What logirgb can do |
+|---|---|
+| G915 and G915 TKL | Lighting of the keys and the logo, brightness. Live only: the change lasts until the keyboard is turned off. The keyboard stays in onboard mode, because host mode loses the G key functions of the G915 TKL's F row. |
+| PRO X Wireless and other G headsets with 0x8300 | Sidetone, and on the PRO X Wireless the time before it turns off when idle (0x1F20). |
+
 ## Install
 
 ```bash
@@ -81,12 +88,15 @@ logirgb set -d g515 static --color red --preview  # show it without storing it
 logirgb release                                  # drop a preview
 logirgb profiles -d g502 --disable 3,4,5         # profile button cycles 1 and 2
 logirgb reset-profiles -d g502                   # back to the factory profiles
+logirgb headset --sidetone 40 --auto-off 30      # headset settings, stored right away
 ```
 
 Effects are `off`, `static`, `pulse`, `breathe`, `cycle`, `wave`, `ripple` and
 `starlight`; `logirgb list` shows which ones each zone supports and which
 parameters they take (`--color`, `--color2`, `--period`, `--speed`,
-`--intensity`, `--saturation`, `--direction`, `--form`).
+`--intensity`, `--saturation`, `--direction`, `--form`). Without `-z`, a
+zone that lacks the effect gets the closest one it has: on the G915 the logo
+shows cycle when the keys show wave, and static when they show ripple.
 
 ### Storing settings in the device
 
@@ -167,6 +177,7 @@ ctl.SetEffect(0, lighting.Effect{Name: "static", Values: map[lighting.Param]int{
   battery, firmware, notifications.
 - `lighting`: zones and effects (0x8070/0x8071), brightness (0x8040), idle/sleep timers,
   storing lighting in onboard memory (0x8100 profiles, 0x8101 profile management).
+- `headset`: sidetone (0x8300) and auto-off (0x1F20).
 
 ## References
 
