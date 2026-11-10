@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -21,50 +22,113 @@ import (
 // ErrPermission marks a device the current user cannot open.
 var ErrPermission = errors.New("no permission")
 
+// ErrAsleep marks a device paired with a receiver that does not answer.
+var ErrAsleep = errors.New("asleep or out of range")
+
 // Entry is one discovered device.
 type Entry struct {
 	Info hidpp.Info
-	Name string
-	Key  string
-	Dev  *hidpp.Device
-	Ctl  *lighting.Controller
-	Err  error
+	// Index is the device's slot on a receiver, or 0xFF for a device
+	// attached directly.
+	Index   byte
+	Name    string
+	Key     string
+	Kind    string
+	Dev     *hidpp.Device
+	Ctl     *lighting.Controller
+	Battery *hidpp.Battery
+	Err     error
 }
 
 // Usable reports whether the device can be controlled.
 func (e *Entry) Usable() bool { return e.Ctl != nil }
 
-// Scan discovers Logitech HID++ devices and opens those with lighting.
-// Devices that cannot be opened are returned with Err set.
+// Slot describes where a device behind a receiver sits, or "" for a device
+// attached directly.
+func (e *Entry) Slot() string {
+	if e.Index == hidpp.DeviceIndexDirect {
+		return ""
+	}
+	return fmt.Sprintf("slot %d", e.Index)
+}
+
+// Scan discovers Logitech HID++ devices, every paired device of a receiver
+// included, and opens those with lighting. Devices that cannot be opened
+// are returned with Err set.
 func Scan(softwareID byte) ([]*Entry, error) {
 	infos, err := hidpp.Discover()
 	if err != nil {
 		return nil, err
 	}
 	var out []*Entry
+	seen := map[uint32]bool{}
+	// A receiver run by the kernel's hid-logitech-dj driver also gives each
+	// paired device a node of its own; those come first, so the receiver
+	// only adds what they lack.
+	slices.SortStableFunc(infos, func(a, b hidpp.Info) int {
+		return cmpBool(a.DJReceiver(), b.DJReceiver())
+	})
 	for _, info := range infos {
-		e := &Entry{Info: info, Name: info.Name, Key: state.Key(info.VendorID, info.ProductID)}
-		out = append(out, e)
+		key := state.Key(info.VendorID, info.ProductID)
 		if unix.Access(info.Path, unix.R_OK|unix.W_OK) != nil {
-			e.Err = ErrPermission
+			out = append(out, &Entry{Info: info, Index: hidpp.DeviceIndexDirect, Name: info.Name, Key: key, Err: ErrPermission})
 			continue
 		}
-		dev, err := hidpp.Open(info)
+		slots, err := hidpp.OpenAll(info)
 		if err != nil {
-			e.Err = err
+			if !info.DJReceiver() {
+				out = append(out, &Entry{Info: info, Index: hidpp.DeviceIndexDirect, Name: info.Name, Key: key, Err: err})
+			}
 			continue
 		}
-		dev.SoftwareID = softwareID
-		e.Dev = dev
-		e.Name = dev.Name()
-		ctl, err := lighting.New(dev)
-		if err != nil {
-			e.Err = err
-			continue
+		for _, slot := range slots {
+			e := &Entry{Info: info, Index: slot.Index, Name: info.Name, Key: key}
+			if slot.Dev == nil {
+				if !info.DJReceiver() {
+					e.Name = fmt.Sprintf("%s, %s", info.Name, e.Slot())
+					e.Err = ErrAsleep
+					out = append(out, e)
+				}
+				continue
+			}
+			dev := slot.Dev
+			if id, err := dev.UnitID(); err == nil && id != 0 {
+				if seen[id] {
+					dev.Close()
+					continue
+				}
+				seen[id] = true
+			}
+			out = append(out, e)
+			open(e, dev, softwareID)
 		}
-		e.Ctl = ctl
 	}
 	return out, nil
+}
+
+func cmpBool(a, b bool) int {
+	switch {
+	case a == b:
+		return 0
+	case a:
+		return 1
+	}
+	return -1
+}
+
+// open fills in what an opened device has.
+func open(e *Entry, dev *hidpp.Device, softwareID byte) {
+	dev.SoftwareID = softwareID
+	e.Dev = dev
+	e.Name = dev.Name()
+	e.Kind = dev.Kind()
+	e.Battery, _ = dev.Battery()
+	ctl, err := lighting.New(dev)
+	if err != nil {
+		e.Err = err
+		return
+	}
+	e.Ctl = ctl
 }
 
 // Close releases all opened devices.

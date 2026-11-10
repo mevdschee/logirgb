@@ -34,7 +34,12 @@ const (
 const (
 	FeatureRoot              uint16 = 0x0000
 	FeatureFeatureSet        uint16 = 0x0001
+	FeatureFirmware          uint16 = 0x0003
 	FeatureDeviceName        uint16 = 0x0005
+	FeatureBattery           uint16 = 0x1000
+	FeatureBatteryVoltage    uint16 = 0x1001
+	FeatureUnifiedBattery    uint16 = 0x1004
+	FeatureHeadsetPower      uint16 = 0x1F20
 	FeatureBrightnessControl uint16 = 0x8040
 	FeatureColorLEDEffects   uint16 = 0x8070
 	FeatureRGBEffects        uint16 = 0x8071
@@ -42,6 +47,7 @@ const (
 	FeaturePerKeyLighting2   uint16 = 0x8081
 	FeatureOnboardProfiles   uint16 = 0x8100
 	FeatureProfileManagement uint16 = 0x8101
+	FeatureSidetone          uint16 = 0x8300
 )
 
 // ErrNotSupported is returned when a device does not implement a feature.
@@ -71,6 +77,21 @@ func (e *Error) Error() string {
 	return fmt.Sprintf("hid++ error 0x%02x", e.Code)
 }
 
+// Error10 is a HID++ 1.0 error reply, as sent by receivers.
+type Error10 struct {
+	Code byte
+}
+
+func (e *Error10) Error() string {
+	return fmt.Sprintf("hid++ 1.0 error 0x%02x", e.Code)
+}
+
+// HID++ 1.0 error codes a receiver sends for a slot.
+const (
+	err10ConnectFail   = 0x04
+	err10ResourceError = 0x09
+)
+
 // Device is an open HID++ 2.0 device.
 type Device struct {
 	Info  Info
@@ -82,7 +103,9 @@ type Device struct {
 	fd       int
 	mu       sync.Mutex
 	features map[uint16]byte
+	versions map[uint16]byte
 	pending  []Notification
+	name     string
 }
 
 // Notification is an unsolicited event sent by the device.
@@ -96,28 +119,124 @@ type Notification struct {
 // device on it. Directly attached devices answer on index 0xFF; for
 // receivers the first paired device that responds is used.
 func Open(info Info) (*Device, error) {
-	fd, err := unix.Open(info.Path, unix.O_RDWR|unix.O_CLOEXEC, 0)
+	slots, err := OpenAll(info)
+	if err != nil {
+		return nil, err
+	}
+	var dev *Device
+	for _, s := range slots {
+		if s.Dev != nil && dev == nil {
+			dev = s.Dev
+		} else if s.Dev != nil {
+			s.Dev.Close()
+		}
+	}
+	if dev == nil {
+		return nil, fmt.Errorf("%s: no HID++ 2.0 device responded", info.Path)
+	}
+	return dev, nil
+}
+
+// Slot is a device found on a hidraw node. Dev is nil for a device that is
+// paired with a receiver but asleep or out of range.
+type Slot struct {
+	Index byte
+	Dev   *Device
+}
+
+// OpenAll opens every HID++ 2.0 device on the hidraw node. A directly
+// attached device answers on index 0xFF. A receiver answers there with a
+// HID++ 1.0 error, and then each of its slots is tried: every paired device
+// gets its own Device, and paired devices that do not answer are returned
+// without one. A node the kernel made for one device behind a receiver
+// answers on that device's index.
+func OpenAll(info Info) ([]Slot, error) {
+	d, err := openIndex(info, DeviceIndexDirect)
+	if err != nil {
+		return nil, err
+	}
+	// A busy device occasionally misses the first ping, so the direct index
+	// gets a few attempts before receiver slots are tried.
+	receiver := false
+	for i := 0; i < 3; i++ {
+		err := d.ping(byte(i))
+		if err == nil {
+			return []Slot{{Index: DeviceIndexDirect, Dev: d}}, nil
+		}
+		var e10 *Error10
+		if errors.As(err, &e10) {
+			receiver = true
+			break
+		}
+	}
+	var slots []Slot
+	for idx := byte(1); idx <= 7; idx++ {
+		d.Index = idx
+		err := d.ping(3 + idx)
+		if err == nil {
+			slots = append(slots, Slot{Index: idx, Dev: d})
+			if !receiver {
+				return slots, nil
+			}
+			if d, err = openIndex(info, DeviceIndexDirect); err != nil {
+				closeSlots(slots)
+				return nil, err
+			}
+			continue
+		}
+		var e10 *Error10
+		if receiver && errors.As(err, &e10) && (e10.Code == err10ConnectFail || e10.Code == err10ResourceError) {
+			slots = append(slots, Slot{Index: idx})
+		}
+	}
+	d.Close()
+	if len(slots) == 0 {
+		return nil, fmt.Errorf("%s: no HID++ 2.0 device responded", info.Path)
+	}
+	return slots, nil
+}
+
+func closeSlots(slots []Slot) {
+	for _, s := range slots {
+		if s.Dev != nil {
+			s.Dev.Close()
+		}
+	}
+}
+
+// openFD opens a hidraw node; tests replace it with a fake device.
+var openFD = func(path string) (int, error) {
+	return unix.Open(path, unix.O_RDWR|unix.O_CLOEXEC, 0)
+}
+
+func openIndex(info Info, idx byte) (*Device, error) {
+	fd, err := openFD(info.Path)
 	if err != nil {
 		if errors.Is(err, unix.EACCES) {
 			return nil, fmt.Errorf("open %s: permission denied (install the udev rule, see README)", info.Path)
 		}
 		return nil, fmt.Errorf("open %s: %w", info.Path, err)
 	}
-	d := &Device{Info: info, SoftwareID: DefaultSoftwareID, fd: fd, features: map[uint16]byte{FeatureRoot: 0}}
+	return &Device{
+		Info: info, Index: idx, SoftwareID: DefaultSoftwareID, fd: fd,
+		features: map[uint16]byte{FeatureRoot: 0},
+		versions: map[uint16]byte{},
+	}, nil
+}
 
-	// A busy device occasionally misses the first ping, so the direct index
-	// gets a few attempts before receiver slots are tried.
-	for i, idx := range []byte{DeviceIndexDirect, DeviceIndexDirect, DeviceIndexDirect, 1, 2, 3, 4, 5, 6, 7} {
-		d.Index = idx
-		// The ping echoes its third byte; a changing value makes sure the
-		// reply belongs to this ping and not to an earlier one.
-		payload := byte(0x5A + i)
-		if r, err := d.call(0, 1, 500*time.Millisecond, 0, 0, payload); err == nil && r[2] == payload {
-			return d, nil
-		}
+// ping checks that a HID++ 2.0 device answers on d.Index. The ping echoes
+// its third byte; a changing value makes sure the reply belongs to this
+// ping and not to an earlier one.
+func (d *Device) ping(n byte) error {
+	payload := 0x5A + n
+	r, err := d.call(0, 1, 500*time.Millisecond, 0, 0, payload)
+	if err != nil {
+		return err
 	}
-	d.Close()
-	return nil, fmt.Errorf("%s: no HID++ 2.0 device responded", info.Path)
+	if r[2] != payload {
+		return errors.New("ping reply does not match")
+	}
+	return nil
 }
 
 // Close releases the hidraw node.
@@ -142,11 +261,22 @@ func (d *Device) FeatureIndex(id uint16) (byte, error) {
 	}
 	d.mu.Lock()
 	d.features[id] = resp[0]
+	d.versions[id] = resp[2]
 	d.mu.Unlock()
 	if resp[0] == 0 {
 		return 0, ErrNotSupported
 	}
 	return resp[0], nil
+}
+
+// FeatureVersion returns the version of a feature the device implements.
+func (d *Device) FeatureVersion(id uint16) (int, error) {
+	if _, err := d.FeatureIndex(id); err != nil {
+		return 0, err
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return int(d.versions[id]), nil
 }
 
 // HasFeature reports whether the device implements the given feature.
@@ -185,6 +315,13 @@ func (d *Device) Features() ([]uint16, error) {
 // Name returns the marketing name reported by the device, falling back to
 // the name the kernel knows it by.
 func (d *Device) Name() string {
+	if d.name == "" {
+		d.name = d.readName()
+	}
+	return d.name
+}
+
+func (d *Device) readName() string {
 	resp, err := d.Call(FeatureDeviceName, 0)
 	if err != nil {
 		return d.Info.Name
@@ -260,7 +397,7 @@ func (d *Device) call(featIdx, fn byte, timeout time.Duration, params ...byte) (
 			return nil, &Error{Code: msg[5]}
 		case msg[2] == 0x8F && msg[3] == featIdx && len(msg) > 5 && msg[4] == fnsw:
 			// HID++ 1.0 error, e.g. a receiver rejecting a 2.0 request.
-			return nil, fmt.Errorf("hid++ 1.0 error 0x%02x", msg[5])
+			return nil, &Error10{Code: msg[5]}
 		case msg[2] == featIdx && msg[3] == fnsw:
 			out := make([]byte, longLen-4)
 			copy(out, msg[4:])

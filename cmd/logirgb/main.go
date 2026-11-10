@@ -113,7 +113,14 @@ func cmdList(args []string) error {
 	defer app.Close(entries)
 
 	for i, e := range entries {
-		fmt.Printf("%d. %s  [%s, %s]\n", i+1, e.Name, e.Info.Path, e.Key)
+		where := []string{e.Info.Path, e.Key}
+		if slot := e.Slot(); slot != "" {
+			where = append(where, slot)
+		}
+		fmt.Printf("%d. %s  [%s]\n", i+1, e.Name, strings.Join(where, ", "))
+		if e.Battery != nil {
+			fmt.Printf("   battery: %s\n", e.Battery)
+		}
 		if !e.Usable() {
 			fmt.Printf("   unavailable: %v\n", e.Err)
 			continue

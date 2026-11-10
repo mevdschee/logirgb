@@ -1057,7 +1057,11 @@ func (m *model) viewDevices(width int) (string, int) {
 			line = "  " + line
 		}
 		b.WriteString(line + "\n")
-		b.WriteString(dimStyle.Render(truncate("    "+e.Info.Path, width)) + "\n")
+		sub := e.Info.Path
+		if e.Battery != nil {
+			sub += "  " + e.Battery.String()
+		}
+		b.WriteString(dimStyle.Render(truncate("    "+sub, width)) + "\n")
 	}
 	return strings.TrimRight(b.String(), "\n"), sel
 }
@@ -1079,6 +1083,9 @@ func (m *model) viewSettings(width int) (string, int) {
 			b.WriteString(errStyle.Render(e.Err.Error()))
 		}
 		return b.String(), 0
+	}
+	if info := deviceInfo(e); info != "" {
+		b.WriteString(dimStyle.Render(info) + "\n")
 	}
 	switch {
 	case !s.claimed:
@@ -1163,6 +1170,18 @@ func (m *model) viewSettings(width int) (string, int) {
 		b.WriteString("\n" + dimStyle.Render(truncate("only stored lighting dims and turns off; press w", width)))
 	}
 	return strings.TrimRight(b.String(), "\n"), sel
+}
+
+// deviceInfo describes the receiver slot and battery of a device.
+func deviceInfo(e *app.Entry) string {
+	var parts []string
+	if slot := e.Slot(); slot != "" {
+		parts = append(parts, "receiver "+slot)
+	}
+	if e.Battery != nil {
+		parts = append(parts, "battery "+e.Battery.String())
+	}
+	return strings.Join(parts, " · ")
 }
 
 func bar(v, total int) string {

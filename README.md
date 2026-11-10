@@ -25,7 +25,9 @@ zone 0.
 
 Other devices that expose 0x8070 or 0x8071 should work too. Devices are found
 by scanning `/sys/class/hidraw` for Logitech nodes that declare the HID++ long
-report.
+report. Every device paired with a LIGHTSPEED, Unifying or Bolt receiver is
+listed, also when several share one receiver, and paired devices that are
+asleep show up as such. Wireless devices show their battery.
 
 ## Install
 
@@ -161,7 +163,8 @@ ctl.Claim()
 ctl.SetEffect(0, lighting.Effect{Name: "static", Values: map[lighting.Param]int{lighting.ParamColor: 0xff8000}})
 ```
 
-- `hidpp`: discovery, request/response matching, feature lookup, device name, notifications.
+- `hidpp`: discovery, receiver slots, request/response matching, feature lookup, device name,
+  battery, firmware, notifications.
 - `lighting`: zones and effects (0x8070/0x8071), brightness (0x8040), idle/sleep timers,
   storing lighting in onboard memory (0x8100 profiles, 0x8101 profile management).
 
