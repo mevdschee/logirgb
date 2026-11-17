@@ -33,6 +33,7 @@ Untested, but supported from what other tools know about them:
 
 | Device | What logirgb can do |
 |---|---|
+| G515 Rapid TKL | Lighting, brightness, and storing the lighting in the active onboard profile, like the G515 TKL. Storing needs a user profile written once by G HUB, and leaves the analog key settings alone. |
 | G915 and G915 TKL | Lighting of the keys and the logo, brightness. Live only: the change lasts until the keyboard is turned off. The keyboard stays in onboard mode, because host mode loses the G key functions of the G915 TKL's F row. |
 | PRO X Wireless and other G headsets with 0x8300 | Sidetone, and on the PRO X Wireless the time before it turns off when idle (0x1F20). |
 
@@ -123,6 +124,14 @@ timeout and wakes up on the next key press, also after a power cycle. While
 you are previewing changes the host controls the lighting and the firmware
 does not dim; storing hands control back, and `o` in the TUI (or
 `logirgb release`) drops a preview without storing it.
+
+**G515 Rapid TKL.** The Rapid has three onboard profiles (Fn+F5) next to
+its analog key settings. logirgb stores the lighting in the profile that is
+active, or in profile 1 when the customizable analog profile is active, and
+keeps every other file. It only writes to profiles G HUB has saved to the
+keyboard before, because the locations of the other files are not known
+otherwise. Whether the Rapid honors the stored idle and sleep timeouts is
+not known yet.
 
 **G502 HERO.** The mouse re-applies the lighting of its onboard profile
 whenever you switch profiles (the button behind the scroll wheel) or replug
