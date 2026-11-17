@@ -21,9 +21,11 @@ hardware tests.
 - **[ksanislo]** G HUB captures and hardware tests by Ken Sanislo, posted in
   Solaar PR #3149 (G515 LIGHTSPEED TKL).
 - **[Solaar]**, **[OpenRGB]**: from that tool's source code.
-- **[issue #2]** a read-only dump from a G515 Rapid TKL (`046d:c363`)
-  posted in this project's issue #2. Only the first 16 bytes of each
-  directory and the first 99 bytes of the factory profile were read.
+- **[issue #2]** read-only dumps from a G515 Rapid TKL (`046d:c363`)
+  posted in this project's issue #2: first a partial one (16 bytes of each
+  directory, 99 bytes of the factory profile), then all files in full.
+- **[issue #4]** dumps, USB captures of G HUB and experiments by a second
+  G515 Rapid TKL owner (firmware U1 78.00 build 0004) in issue #4.
 - **[unverified]** our inference, or a single unconfirmed claim.
 
 Function numbers are the high nibble of the HID++ function byte (`fn6` is
@@ -169,41 +171,58 @@ A directory file holds a count and a list of 10 byte entries:
 
 ```
 [crc32 u32, count, count x entry, ff]
-entry: [id, 81 01, 40, length, crc32 u32, location]
+entry: [id, type u16, flags, length, crc32 u32, location]
 ```
 
 The CRC at 0-3 covers everything from byte 4 to the end, so it can only be
 checked after reading the full file (`5 + 10 * count + 1` bytes). On the
-G515 TKL count is 1, which gives the 16 byte file in the table below. This
-reading fits both devices but comes from a single partial Rapid dump
-**[unverified]**.
+G515 TKL count is 1, which gives the 16 byte file in the table below. The
+full Rapid user directory confirms this layout and both checksums.
 
 ### G515 Rapid TKL [issue #2]
 
-First 16 bytes of each directory:
+Full directories:
 
 ```
-0x0100  1b c0 c0 db 04 01 81 01 40 6d 3b d4 06 de 01 02   factory, count 4
-0x0000  22 56 be 0a 05 01 81 01 40 6d 7f 7c fa ab 08 02   user, count 5
+0x0100 factory, 46 bytes, count 4
+  1b c0 c0 db 04
+  01 81 01 40 6d 3b d4 06 de 01    profile 1, 109 bytes, 0x0101
+  02 81 01 40 6d 9c 0c ec 25 02    profile 2, 0x0102
+  03 81 01 40 6d 08 a4 aa f0 03    profile 3, 0x0103
+  04 1b 08 40 be 80 82 21 ee 04    0x1B08 analog keys, 190 bytes, 0x0104
+  ff
+0x0000 user, 56 bytes, count 5 (written by G HUB)
+  22 56 be 0a 05
+  01 81 01 40 6d 7f 7c fa ab 08    profile 1, 0x0008
+  02 81 01 40 6d b4 5b 72 3b 09    profile 2, 0x0009
+  03 81 01 40 6d 48 31 40 d2 0a    profile 3, 0x000a
+  04 1b 08 40 be 89 c4 7a a0 0b    analog keys, 190 bytes, 0x000b
+  05 1b 08 00 ce 7a a0 ca a1 0d    analog keys, 206 bytes, 0x000d
+  ff
 ```
 
-- Byte 4 is `04` (factory) and `05` (user) instead of `01`. Byte 15 is
-  `02`, the id of the second entry, instead of the `ff` terminator. With
-  the 16 byte read the CRC at 0-3 does not validate, as expected for a
-  truncated file. Full lengths would be 46 and 56 bytes.
-- Entry 1 has the same shape as on the G515 TKL, with length `6d`: the
-  profile is 109 bytes. Its location is `01` (factory) and `08` (user), the
-  same slots as the G515 TKL.
-- What entries 2-5 point to is unknown; effect cards are a guess.
-- The user directory was already present before this project touched the
-  device, probably written by G HUB. Loading `0x0008` with length 99
-  returned nothing (the old dump printed error `0x04` on a user address as
-  empty), while the directory lists a 109 byte file, so fn8 may need the
-  exact length for user files **[unverified]**. Loading the factory
-  profile with 99 bytes worked.
-
-`dump-profile` reads each directory at its full length and every file it
-lists with the entry's length, to complete this picture.
+- The user directory checksum (CRC32 of bytes 4 to the end) and all five
+  entry checksums (CRC32 of the whole file) validate. In the factory
+  directory neither the directory checksum nor any entry checksum matches,
+  so factory checksums are computed some other way (see the G515 TKL
+  mismatch below).
+- Entry byte 1-2 is a file type: the owning feature, `81 01` for lighting
+  profiles and `1b 08` (AnalogKeys, the Hall effect switches) for key
+  tables. Byte 3 is `40` or `00`, meaning unknown.
+- The keyboard has three lighting profiles (Fn+F5 cycles them). fn6
+  reported `03 00 03`: the active file is the entry ID in the user
+  partition, here profile 3 at `0x000a`.
+- The `1b 08` files are `[count u16, count x (key index, value)]`. [issue #4]
+  captures put actuation points (tenths of a mm) in the 206 byte file and
+  rapid trigger sensitivity in the 178/190 byte file. Profile bytes 94 and
+  96 hold the IDs of the analog files the profile uses (`05` and `ff` in
+  user profile 1, `ff` and `04` in factory profile 1). When G HUB changed
+  only the actuation table it saved it under a new ID and location and
+  updated byte 94 [issue #4].
+- The other device in [issue #4] had no user directory at first and the
+  firmware reported `00 00 fd` and `03 00 fd`: a customizable analog
+  profile with ID `fd` that is not in any directory. Where that profile
+  keeps its settings is unknown.
 
 ## Directory entry (16 bytes)
 
@@ -274,31 +293,53 @@ persisted device state on G-series devices: idle/sleep timers, baseline RGB
 effect, FKC enable, and more". What "FKC" covers (probably a function key
 or game mode setting in bytes 75-98) is **[unverified]**.
 
-### G515 Rapid TKL factory profile [issue #2]
+### G515 Rapid TKL profiles [issue #2]
 
-First 99 of 109 bytes of `0x0101`:
+Factory profile 1 (`0x0101`) and G HUB user profile 1 (`0x0008`), 109 bytes:
 
 ```
-01 01 ff ff ff ff ff ff ff ff ff ff ff ff ff ff   header, timers ff ff ff ff, name...
+01 01 ff ff ff ff ff ff ff ff ff ff ff ff ff ff   number 1, format 1, timers never, name...
 ff ff ff ff ff ff ff ff ff ff ff ff ff ff 01 ff   ...name, rec0
 72 03 00 00 00 00 00 00 00 01 ff 72 03 00 00 00   rec0 cont., rec1
 00 00 00 00 01 80 39 01 00 00 00 00 00 00 00 01   rec1, rec2
 80 39 01 00 00 00 00 00 00 00 00 00 00 00 00 00   rec3, flags 00, ...
 00 00 00 08 01 00 00 00 00 00 00 0a 01 ff ff 01
-04 ff ff
+04 ff ff ff ff ff ff ff ff ff ff ff ff
+
+00 01 ff ff ff ff 00 50 00 52 00 4f 00 46 00 49   number 0, name UTF-16BE "PROFILE_NAM"
+00 4c 00 45 00 5f 00 4e 00 41 00 4d 00 00 00 00
+00 00 00 00 00 00 00 00 00 01 ff ff ff 02 00 00   rec0 zero, rec1 static white
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   rec2, rec3 zero
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 08 01 00 00 00 00 00 00 14 00 00 05 ff
+ff ff ff ff ff ff ff ff ff ff ff ff ff
 ```
 
-The first 75 bytes match the G515 TKL layout: records 0 and 1 hold static
-orange `ff 72 03`, records 2 and 3 the same at 50% (`80 39 01`), flags `00`.
-Bytes 75-98 differ from the G515 TKL (`08 01` where the TKL has `10 00 01`).
-The timer bytes are `ff ff` (never) although 0x8071 reported idle 1800 s on
-the same device, so the Rapid may keep its timers elsewhere, maybe in the
-10 bytes not read yet **[unverified]**.
+- Bytes 0-74 follow the G515 TKL layout. Byte 0 is the profile number
+  (`01`-`03` in the factory profiles), but G HUB writes `00` for user
+  profile 1, so only byte 1 (`01`) can be checked.
+- The name is UTF-16 big endian; G HUB cut "PROFILE_NAME" to 12 units
+  including the terminator.
+- Byte 91 matches the brightness in percent: `0a`, `0a`, `0f` in factory
+  profiles 1-3, `14` (20) in user profile 1, while 0x8040 reported 20 on
+  the same device **[unverified]**.
+- Bytes 94 and 96 reference analog key files by ID (see above).
+- The timers are `ff ff` (never) in every Rapid profile, while 0x8071
+  reported idle 1800 s. Whether the Rapid honors timers written here is
+  **[unverified]**.
 
-Writing for the Rapid would need: the profile length from directory entry 1,
-a user directory rebuilt by changing only entry 1's CRC and location and
-keeping the other entries, and `00 6d` instead of `00 63` in fn9
-**[unverified]**.
+Writing for the Rapid, as this project does it: find the entry of the active
+profile ID in the user directory, write the profile at that entry's
+location with that entry's length, update only that entry's checksum and the
+directory checksum, then activate with `81 01 01 00 <id> 00 6d <crc32>`. The
+analog files and their entries are not touched. Without a user directory
+this project refuses: it would have to invent locations for three profiles
+and the analog files.
+
+[issue #4] When the customizable analog profile (`fd`) was active, storing
+the lighting into profile 1 and activating it switched the keyboard to
+profile 1 (`01 00 01`) and Fn+F5 stopped switching profiles until the
+keyboard was unplugged and reconnected. Why is unknown.
 
 ### Lighting records
 
@@ -411,7 +452,10 @@ fn6 [00] -> [x1 00 01]                           bit 0 set, active file 0x0001
 
 Possible field split, **[unverified]**: `81 01` (the feature ID again, a type
 tag), `01` (count or flags), `00 01` file ID (matches what fn6 then
-reports), `00 63` length 99, then the 32-bit hash. That fits ksanislo's
+reports), `00 63` length 99, then the 32-bit hash. [issue #4] G HUB activated
+analog key tables in desktop mode with `1b 08 00 02 00 00 ce <crc32>` and
+`1b 08 01 02 00 00 b2 <crc32>`: the type, a byte that differs per table, a
+byte that may select desktop versus onboard, and the length. That fits ksanislo's
 description of `configure(fileID, size, hash)` and of a reset with
 `fileID = 0xFF00, size = 0, hash = 0`. The reset form has not been tried
 here.
@@ -455,7 +499,7 @@ Consequences:
 | Solaar | constant `PROFILE_MANAGEMENT = 0x8101`; only `fn6 [05]` on claim and `fn6 [03]` on release (`settings_templates.py`, `rgb_power.py`), added through PR #3165 / #3149 |
 | OpenRGB | `LogitechHIDPP20Controller`: fn6 host/onboard switching, and a debug-only fn8 + fnC dump of `0x0101` (99 bytes) |
 | logitech-g515-onboard | full read, backup, write and activate of one static color (Python, stdlib only, GPL-3.0) |
-| this project | `lighting/profilemgmt.go`: same file handling, plus any 0x8071 effect in record 1, a dimmed copy in record 3, and idle/sleep timers |
+| this project | `lighting/profilemgmt.go`: same file handling, plus any 0x8071 effect in record 1, a dimmed copy in record 3, and idle/sleep timers; on the Rapid it writes the active profile listed in an existing user directory |
 | libratbag | none (no issue or code mentions 0x8101) |
 
 ## Pitfalls
@@ -475,8 +519,11 @@ Consequences:
   models, and warns explicitly against the wired-only G515 and G915. This
   project validated the layout on the wired G515 TKL (`c358`) and checks the
   header and directory signature before every write; other devices with
-  0x8101 (G915 X) are untested. The G515 Rapid TKL uses a longer directory
-  and a 109 byte profile and is refused by these checks (see above).
+  0x8101 (G915 X) are untested. The G515 Rapid TKL uses a longer directory,
+  three 109 byte profiles and analog key files; it is supported only when
+  a user directory exists (see above).
+- **Locations are not fixed** on the Rapid. Take every address and length
+  from the directory, and keep entries you do not understand.
 
 ## Sources
 

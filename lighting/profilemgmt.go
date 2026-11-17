@@ -9,13 +9,15 @@ import (
 	"github.com/mevdschee/logirgb/hidpp"
 )
 
-// Keyboards with 0x8071 RGBEffects (G515) keep their onboard profile in
+// Keyboards with 0x8071 RGBEffects (G515) keep their onboard profiles in
 // files managed by 0x8101 ProfileManagement. The layout below was observed on
-// the G515 TKL (wired and LIGHTSPEED) and is validated before every write.
+// the G515 TKL (wired and LIGHTSPEED) and the G515 Rapid TKL, and is
+// validated before every write.
 //
-// Profile (99 bytes):
+// Profile (99 bytes on the G515 TKL, 109 on the Rapid):
 //
-//	0-1    header 01 01
+//	0      profile number (G HUB writes 00 for user profile 1)
+//	1      format 01
 //	2-3    idle timeout in seconds (the firmware dims), big endian,
 //	       0xFFFF for never
 //	4-5    sleep timeout in seconds (the firmware turns the lighting off),
@@ -25,21 +27,29 @@ import (
 //	       byte at 0 the firmware shows record 1 and switches to record 3
 //	       while idle
 //	74     lighting flags
-//	75-98  key mask and other data, preserved
+//	75-    key mask, references to other files and other data, preserved
 //
-// Directory entry (16 bytes): CRC32 of bytes 4-15 at 0-3, a fixed header
-// at 4-9, the CRC32 of the profile at 10-13 and the profile location at 14.
+// A directory file is [crc32 u32, count, count 10 byte entries, ff], each
+// entry [id, type u16, flags, length, crc32 u32, location]. The CRC at 0-3
+// covers bytes 4 to the end, the entry CRC covers the whole file it points
+// to. Lighting profiles have type 0x8101; the Rapid also lists 0x1B08
+// analog key files, which are left alone. The factory directory is at
+// 0x0100 and its files at 0x01xx, the user directory at 0x0000 and its files
+// at 0x00xx.
 const (
-	pmFactoryProfile = 0x0101
-	pmFactoryDir     = 0x0100
-	pmUserProfile    = 0x0008
-	pmUserDir        = 0x0000
-	pmProfileSize    = 99
-	pmDirSize        = 16
-	pmRecords        = 30
-	pmFlags          = 74
+	pmFactoryDir   = 0x0100
+	pmUserProfile  = 0x0008
+	pmUserDir      = 0x0000
+	pmProfileSize  = 99 // the smallest known profile, G515 TKL
+	pmDirSize      = 16
+	pmRecords      = 30
+	pmFlags        = 74
+	pmDirEntrySize = 10
+	pmDirMaxCount  = 24
 )
 
+// pmDirHeader is the start of the single entry directory of the G515 TKL,
+// the only layout for which a user directory is created from scratch.
 var pmDirHeader = []byte{0x01, 0x01, 0x81, 0x01, 0x40, 0x63}
 
 // HasProfileStorage reports whether lighting and idle timers can be stored
@@ -81,7 +91,7 @@ func (c *Controller) pmBuffer(size int) ([]byte, error) {
 // pmSave stages data in the device buffer, verifies it, commits it to flash
 // and verifies the flash copy.
 func (c *Controller) pmSave(addr int, data []byte, checksum uint32) error {
-	if addr != pmUserProfile && addr != pmUserDir {
+	if addr < 0 || addr >= pmFactoryDir {
 		return fmt.Errorf("refusing to write file %#04x", addr)
 	}
 	n := len(data)
@@ -114,13 +124,38 @@ func (c *Controller) pmSave(addr int, data []byte, checksum uint32) error {
 	return nil
 }
 
-func validProfile(p []byte) bool {
-	return len(p) == pmProfileSize && p[0] == 0x01 && p[1] == 0x01
+func validProfile(p []byte, size int) bool {
+	return len(p) == size && size >= pmProfileSize && p[1] == 0x01
 }
 
-func validDir(d []byte) bool {
-	return len(d) == pmDirSize && bytes.Equal(d[4:10], pmDirHeader) && d[15] == 0xFF &&
-		crc32.ChecksumIEEE(d[4:]) == be32(d[0:4])
+// validDir checks the structure of a full directory file and, with
+// checkCRC, its own checksum. The factory directory of the Rapid has a
+// checksum that does not match, like the factory file checksums do not.
+func validDir(d []byte, checkCRC bool) bool {
+	if len(d) < pmDirSize || pmDirLen(d) != len(d) || d[len(d)-1] != 0xFF {
+		return false
+	}
+	return !checkCRC || crc32.ChecksumIEEE(d[4:]) == be32(d[0:4])
+}
+
+// pmProfileEntry returns the offset of the lighting profile entry with the
+// given ID in a directory, or -1.
+func pmProfileEntry(dir []byte, id byte) int {
+	for i, e := range pmDirEntries(dir) {
+		if e[0] == id && e[1] == 0x81 && e[2] == 0x01 {
+			return 5 + i*pmDirEntrySize
+		}
+	}
+	return -1
+}
+
+// pmDirWithFile returns a copy of dir with the checksum of the file of the
+// entry at off replaced and the directory checksum recomputed.
+func pmDirWithFile(dir []byte, off int, file []byte) []byte {
+	d := bytes.Clone(dir)
+	putBE32(d[off+5:off+9], crc32.ChecksumIEEE(file))
+	putBE32(d[0:4], crc32.ChecksumIEEE(d[4:]))
+	return d
 }
 
 func be32(b []byte) uint32 {
@@ -130,14 +165,6 @@ func be32(b []byte) uint32 {
 func putBE32(b []byte, v uint32) {
 	b[0], b[1], b[2], b[3] = byte(v>>24), byte(v>>16), byte(v>>8), byte(v)
 }
-
-// A directory file looks like [crc32 u32, count, count 10 byte entries, ff],
-// each entry [id, 81 01, 40, length, crc32 u32, location]. The G515 TKL has
-// one entry, the G515 Rapid TKL several, so only the first 16 bytes match.
-const (
-	pmDirEntrySize = 10
-	pmDirMaxCount  = 24
-)
 
 // pmDirLen returns the length of a directory file from its first bytes.
 func pmDirLen(head []byte) int {
@@ -193,11 +220,7 @@ func (c *Controller) DumpProfileFiles() (*ProfileDump, error) {
 		return b
 	}
 	for _, dirAddr := range []int{pmFactoryDir, pmUserDir} {
-		head, err := c.pmRead(dirAddr, pmDirSize)
-		dir := head
-		if n := pmDirLen(head); err == nil && n > len(head) {
-			dir, err = c.pmRead(dirAddr, n)
-		}
+		dir, err := c.pmReadDir(dirAddr)
 		d.Files = append(d.Files, DumpedFile{Addr: dirAddr, Data: dir, Err: err})
 		if err != nil {
 			continue
@@ -211,44 +234,110 @@ func (c *Controller) DumpProfileFiles() (*ProfileDump, error) {
 	return &d, nil
 }
 
-type pmFiles struct {
-	factoryProfile, factoryDir, userProfile, userDir []byte
+// pmReadDir reads a directory file at its full length. It returns nil
+// without error for a user directory that was never written.
+func (c *Controller) pmReadDir(addr int) ([]byte, error) {
+	head, err := c.pmRead(addr, pmDirSize)
+	if err != nil || head == nil {
+		return head, err
+	}
+	if n := pmDirLen(head); n > len(head) {
+		return c.pmRead(addr, n)
+	}
+	return head, nil
 }
 
+// pmFiles is the onboard state of one lighting profile: the factory copy,
+// and the user copy with its directory if there is one.
+type pmFiles struct {
+	id             byte // the profile's directory entry ID
+	size           int
+	factoryProfile []byte
+	factoryDir     []byte
+	userDir        []byte // nil if never written
+	userEntry      int    // offset of the profile's entry in userDir
+	userAddr       int    // file of the user profile, -1 if it cannot be created
+	userProfile    []byte // nil if never written
+}
+
+// pmActiveID returns the ID of the lighting profile the firmware runs, or
+// profile 1 when it runs something that is not a lighting profile, like
+// the customizable analog profile (00 fd) of the Rapid.
+func (c *Controller) pmActiveID(factoryDir []byte) byte {
+	m, err := c.pmCall(6, 0x00)
+	if err == nil && len(m) >= 3 && m[1] <= 0x01 && pmProfileEntry(factoryDir, m[2]) >= 0 {
+		return m[2]
+	}
+	return 1
+}
+
+var errUnknownLayout = errors.New("unknown onboard profile layout, not touching it")
+
 func (c *Controller) pmSnapshot() (*pmFiles, error) {
-	var f pmFiles
+	f := pmFiles{userAddr: -1}
 	var err error
-	if f.factoryProfile, err = c.pmRead(pmFactoryProfile, pmProfileSize); err != nil {
+	if f.factoryDir, err = c.pmReadDir(pmFactoryDir); err != nil {
 		return nil, err
 	}
-	if f.factoryDir, err = c.pmRead(pmFactoryDir, pmDirSize); err != nil {
+	if !validDir(f.factoryDir, false) {
+		return nil, errUnknownLayout
+	}
+	f.id = c.pmActiveID(f.factoryDir)
+	fe := pmProfileEntry(f.factoryDir, f.id)
+	if fe < 0 {
+		return nil, errUnknownLayout
+	}
+	f.size = int(f.factoryDir[fe+4])
+	if f.factoryProfile, err = c.pmRead(pmFactoryDir|int(f.factoryDir[fe+9]), f.size); err != nil {
 		return nil, err
 	}
-	if !validProfile(f.factoryProfile) || !validDir(f.factoryDir) {
-		return nil, errors.New("unknown onboard profile layout, not touching it")
+	if !validProfile(f.factoryProfile, f.size) {
+		return nil, errUnknownLayout
 	}
-	if f.userProfile, err = c.pmRead(pmUserProfile, pmProfileSize); err != nil {
+	if f.userDir, err = c.pmReadDir(pmUserDir); err != nil {
 		return nil, err
 	}
-	if f.userDir, err = c.pmRead(pmUserDir, pmDirSize); err != nil {
+	if f.userDir == nil {
+		// Only the single profile G515 TKL layout is known well enough to
+		// create a user directory for; check that its profile slot is
+		// empty too.
+		if bytes.Equal(f.factoryDir[4:10], pmDirHeader) && len(f.factoryDir) == pmDirSize &&
+			validDir(f.factoryDir, true) {
+			if f.userProfile, err = c.pmRead(pmUserProfile, f.size); err != nil {
+				return nil, err
+			}
+			if f.userProfile != nil {
+				return nil, errors.New("user profile storage is half written, not touching it")
+			}
+			f.userAddr = pmUserProfile
+		}
+		return &f, nil
+	}
+	if !validDir(f.userDir, true) {
+		return nil, errors.New("user profile directory is damaged, not touching it")
+	}
+	f.userEntry = pmProfileEntry(f.userDir, f.id)
+	if f.userEntry < 0 || int(f.userDir[f.userEntry+4]) != f.size {
+		return nil, fmt.Errorf("user profile directory has no %d byte profile %d, not touching it", f.size, f.id)
+	}
+	f.userAddr = int(f.userDir[f.userEntry+9])
+	if f.userProfile, err = c.pmRead(f.userAddr, f.size); err != nil {
 		return nil, err
 	}
-	if (f.userProfile == nil) != (f.userDir == nil) {
+	if f.userProfile == nil {
 		return nil, errors.New("user profile storage is half written, not touching it")
 	}
-	if f.userProfile != nil {
-		if !validProfile(f.userProfile) || !validDir(f.userDir) || f.userDir[14] != pmUserProfile ||
-			crc32.ChecksumIEEE(f.userProfile) != be32(f.userDir[10:14]) {
-			return nil, errors.New("user profile does not match its directory entry, not touching it")
-		}
+	if !validProfile(f.userProfile, f.size) ||
+		crc32.ChecksumIEEE(f.userProfile) != be32(f.userDir[f.userEntry+5:]) {
+		return nil, errors.New("user profile does not match its directory entry, not touching it")
 	}
 	return &f, nil
 }
 
 // StoreProfile writes an effect, its dimmed variant (dimPercent of the
 // colors and intensity) and the idle/sleep timeouts into the keyboard's
-// onboard profile and activates it. The firmware then shows the effect,
-// dims it after idle seconds and turns it off after sleep seconds.
+// active onboard profile and activates it. The firmware then shows the
+// effect, dims it after idle seconds and turns it off after sleep seconds.
 func (c *Controller) StoreProfile(e Effect, dimPercent, idle, sleep int) error {
 	if !c.HasProfileStorage() {
 		return errors.New("device has no profile storage")
@@ -263,6 +352,10 @@ func (c *Controller) StoreProfile(e Effect, dimPercent, idle, sleep int) error {
 	f, err := c.pmSnapshot()
 	if err != nil {
 		return err
+	}
+	if f.userAddr < 0 {
+		return errors.New("this keyboard has no user profiles in its onboard memory yet " +
+			"and logirgb cannot create them for this model; save a profile to the onboard memory once with G HUB")
 	}
 
 	base := f.userProfile
@@ -282,13 +375,19 @@ func (c *Controller) StoreProfile(e Effect, dimPercent, idle, sleep int) error {
 	record(3, e.dimmed(ze.Type, dimPercent))
 	p[pmFlags] = 0x00
 
-	dir := bytes.Clone(f.factoryDir)
-	putBE32(dir[10:14], crc32.ChecksumIEEE(p))
-	dir[14] = pmUserProfile
-	putBE32(dir[0:4], crc32.ChecksumIEEE(dir[4:]))
+	var dir []byte
+	if f.userDir != nil {
+		dir = pmDirWithFile(f.userDir, f.userEntry, p)
+	} else {
+		dir = bytes.Clone(f.factoryDir)
+		dir[14] = pmUserProfile
+		dir = pmDirWithFile(dir, 5, p)
+	}
 
+	// The profile goes first: until the directory is written the old
+	// directory entry still describes the old profile.
 	if !bytes.Equal(p, f.userProfile) {
-		if err := c.pmSave(pmUserProfile, p, crc32.ChecksumIEEE(p)); err != nil {
+		if err := c.pmSave(f.userAddr, p, crc32.ChecksumIEEE(p)); err != nil {
 			return err
 		}
 	}
@@ -297,7 +396,7 @@ func (c *Controller) StoreProfile(e Effect, dimPercent, idle, sleep int) error {
 			return err
 		}
 	}
-	return c.activateProfile(p)
+	return c.activateProfile(f.id, p)
 }
 
 // StoredProfile is the lighting a keyboard's onboard profile holds.
@@ -381,14 +480,16 @@ func maxChannel(c int) int {
 
 // activateProfile hands the lighting back to the firmware and makes it
 // load the stored user profile.
-func (c *Controller) activateProfile(p []byte) error {
+func (c *Controller) activateProfile(id byte, p []byte) error {
 	if err := c.setSWControl(swRelease); err != nil {
 		return err
 	}
 	if _, err := c.pmCall(6, 0x0B); err != nil {
 		return fmt.Errorf("onboard mode: %w", err)
 	}
-	cfg := []byte{0x81, 0x01, 0x01, 0x00, 0x01, 0x00, 0x63, 0, 0, 0, 0}
+	// [type 81 01, 01, file ID u16, length u16, crc32]; the field split is a
+	// guess, verified with profile 1 on the G515 TKL and Rapid.
+	cfg := []byte{0x81, 0x01, 0x01, 0x00, id, byte(len(p) >> 8), byte(len(p)), 0, 0, 0, 0}
 	putBE32(cfg[7:], crc32.ChecksumIEEE(p))
 	if _, err := c.pmCall(9, cfg...); err != nil {
 		return fmt.Errorf("activate profile: %w", err)
@@ -397,7 +498,7 @@ func (c *Controller) activateProfile(p []byte) error {
 	if err != nil {
 		return err
 	}
-	if m[0]&1 == 0 || m[1] != 0x00 || m[2] != 0x01 {
+	if m[0]&1 == 0 || m[1] != 0x00 || m[2] != id {
 		return fmt.Errorf("unexpected onboard state % x after activation", m[:3])
 	}
 	return nil
