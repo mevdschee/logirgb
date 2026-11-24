@@ -327,9 +327,13 @@ func (c *Controller) pmSnapshot() (*pmFiles, error) {
 	if f.userProfile == nil {
 		return nil, errors.New("user profile storage is half written, not touching it")
 	}
-	if !validProfile(f.userProfile, f.size) ||
-		crc32.ChecksumIEEE(f.userProfile) != be32(f.userDir[f.userEntry+5:]) {
-		return nil, errors.New("user profile does not match its directory entry, not touching it")
+	if !validProfile(f.userProfile, f.size) {
+		return nil, fmt.Errorf("user profile %d at %#04x has unknown format %02x %02x, not touching it",
+			f.id, f.userAddr, f.userProfile[0], f.userProfile[1])
+	}
+	if sum, want := crc32.ChecksumIEEE(f.userProfile), be32(f.userDir[f.userEntry+5:]); sum != want {
+		return nil, fmt.Errorf("user profile %d at %#04x has checksum %08x, its directory entry says %08x, not touching it",
+			f.id, f.userAddr, sum, want)
 	}
 	return &f, nil
 }
